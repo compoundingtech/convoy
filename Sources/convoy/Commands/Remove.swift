@@ -4,8 +4,8 @@ import Foundation
 
 /// `convoy remove <id>` — remove an agent from the convoy (the symmetric partner to `add`).
 ///
-/// v1 teardown: stop the agent's pty session(s) and, with `--purge`, remove its membership dir.
-/// Session-name resolution is best-effort pending the canonical pty recipe; message history is
+/// Teardown: resolve the agent's pty sessions (its main session + any `-ding` sidecar) from pty's
+/// registry and stop each; with `--purge`, also remove its membership dir. Message history is
 /// never hard-deleted unless you pass `--purge`.
 struct Remove: ParsableCommand {
     static let configuration = CommandConfiguration(
@@ -36,8 +36,17 @@ struct Remove: ParsableCommand {
             throw ConvoyError("no agent \"\(identity)\" on this network. `convoy ls\(network.map { " --network \($0)" } ?? "")` to list members.")
         }
 
+        // Resolve the agent's actual sessions from pty's registry (main + any -ding sidecar).
+        let sessions = Pty.sessions(for: identity, root: network)
+
         Out.line("convoy remove — plan:")
-        Out.line("  stop pty session(s) for \(identity)")
+        if sessions.isEmpty {
+            Out.line("  no running pty sessions for \(identity) (already down)")
+        } else {
+            for s in sessions {
+                Out.line("  stop pty session \(s.displayName ?? s.name) (\(s.name))")
+            }
+        }
         if purge { Out.line("  purge membership dir (\(network ?? "default")/\(identity)) — DELETES message history") }
 
         if dryRun {
@@ -53,14 +62,14 @@ struct Remove: ParsableCommand {
             }
         }
 
-        // Stop sessions. `pty kill` takes a session ref; the identity is the best-effort ref.
-        // (Exact identity→session mapping is finalized once the pty recipe lands.)
-        let env = envOverlay()
-        let killed = try Shell.run("pty", ["kill", identity], env: env, check: false)
-        if killed.ok {
-            Out.line("✓ stopped pty session \(identity)")
-        } else {
-            Out.line("• no pty session matched \"\(identity)\" (already down, or a different session name) — check `pty list`")
+        // Stop each resolved session by its pty id.
+        for s in sessions {
+            let label = s.displayName ?? s.name
+            if Pty.kill(s.name, root: network) {
+                Out.line("✓ stopped \(label)")
+            } else {
+                Out.line("• \(label) didn't stop cleanly (already exited?)")
+            }
         }
 
         if purge {
@@ -75,14 +84,6 @@ struct Remove: ParsableCommand {
         }
 
         Out.line("✓ \(identity) removed from the convoy.")
-    }
-
-    private func envOverlay() -> [String: String]? {
-        guard let network else { return nil }
-        var env = ProcessInfo.processInfo.environment
-        env["ST_ROOT"] = network
-        env["PTY_ROOT"] = network + "/pty"
-        return env
     }
 
     private func defaultNetworkRoot() -> String {
