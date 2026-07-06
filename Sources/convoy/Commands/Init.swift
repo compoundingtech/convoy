@@ -20,7 +20,15 @@ struct Init: ParsableCommand {
 
     func run() throws {
         var args = ["init"]
-        if let dir { args.append(dir) }
+        if let dir {
+            // `st init` requires the target directory to already exist. Creating it is convoy's
+            // job — the whole point is that a network comes up without hand-preparation.
+            if !dryRun && !FileManager.default.fileExists(atPath: dir) {
+                try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+                Out.line("created \(dir)")
+            }
+            args.append(dir)
+        }
         if noChannel { args.append("--no-channel") }
         if dryRun { args.append("--print") }
 
