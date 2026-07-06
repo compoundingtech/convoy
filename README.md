@@ -11,15 +11,18 @@ The metaphor: your agents travel together like a convoy, and each can carry **si
 
 ## Status
 
-Early. Commands are migrating here **gradually** from smalltalk (`launch`, `init`, …) so the surface stays working throughout.
+Early but real. The CLI is a Swift SPM package that **orchestrates** the existing tools (it drives `st` and `pty`; it reimplements neither). `ls`, `doctor`, `init`, `add`, and `remove` work against the live bus today. A macOS menubar app (`Convoy.app`) ships from the same package. See [BUILD.md](BUILD.md).
 
-## Commands (planned)
+The guiding requirement: **it must be impossible to misconfigure an agent.** `convoy add` takes high-level intent and derives all wiring correct-by-construction, validated before launch — see [notes/ACCEPTANCE.md](notes/ACCEPTANCE.md).
 
-- `convoy add <harness> --identity <id> [--ding] [--permanent] [--persona <path>]` — add an agent to the convoy (was `st launch`). It joins the network as a running member.
-- `convoy remove <id>` — remove an agent from the convoy (teardown / decommission). The symmetric partner to `add`.
-- `convoy init` — wire a directory's MCP / hooks (was `st init`).
-- `convoy doctor` — the "will this actually work here?" check: tools installed, config sane, hooks fire, the bus round-trips, an agent can spawn.
-- `convoy ls` — list the convoy's members.
+## Commands
+
+- `convoy add <role> --identity <id> [--transport mcp|ding] [--network <path>] [--persona <path>] [--dry-run]` — add an agent, correct-by-construction (was `st launch`). Role → permission-mode/persona/posture are **derived**, never hand-set; wiring is dry-run-validated before launch.
+- `convoy remove <id> [--purge]` — remove an agent (teardown / decommission). The symmetric partner to `add`.
+- `convoy init [dir]` — create + wire a smalltalk network folder (was `st init`).
+- `convoy doctor` — the "will this actually work here?" check: tools installed, config sane, the bus round-trips.
+- `convoy ls [--live-only]` — list the convoy's members.
+- `convoy app <install|status>` — manage the `Convoy.app` menubar host (non-brew install path).
 
 ## License
 
