@@ -51,9 +51,9 @@ public enum Role: String, Sendable, CaseIterable {
         }
     }
 
-    /// DERIVED — never hand-set. Spawners → bypassPermissions; workers → auto.
-    /// (Per Nathan via cos: spawner→bypassPermissions, worker→auto. The three spawner-class
-    /// roles share the spawner posture; flagged to cos for confirmation.)
+    /// DERIVED — never hand-set. Spawner-class roles run `bypassPermissions` (they spawn/manage
+    /// other agents and must act unattended); workers run the safer `auto` posture. The three
+    /// spawner-class roles share the spawner posture by design.
     public var permissionMode: PermissionMode {
         isSpawner ? .bypassPermissions : .auto
     }

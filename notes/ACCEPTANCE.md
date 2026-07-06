@@ -1,6 +1,6 @@
 # convoy — acceptance criteria
 
-Hard requirements (from Nathan, via cos). These are **acceptance criteria, not polish**.
+Operator-specified acceptance criteria. These are **requirements, not polish**.
 If convoy ships without these, it has not done its job.
 
 ## AC-1 — `convoy add` is correct-by-construction (no footguns)
@@ -51,7 +51,7 @@ cos hand-wrote convoy-claude's own `pty.toml`:
 prefix = "convoy"
 [sessions.claude]
 command = "$HOME/bin/pty-claude-launcher.sh --dangerously-load-development-channels server:st"
-tags = { role = "agent", "st.network" = "/Users/myobie/.local/state/smalltalk" }
+tags = { role = "agent", "st.network" = "~/.local/state/smalltalk" }
 [sessions.claude.env]
 ST_AGENT = "convoy-claude"
 CLAUDE_PERMISSION_MODE = "bypassPermissions"

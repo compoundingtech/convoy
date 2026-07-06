@@ -9,6 +9,8 @@ Where the pieces sit:
 
 The metaphor: your agents travel together like a convoy, and each can carry **sidecars** — a *ding* sidecar (delivers messages to an agent running with no MCP) and a *sync* sidecar (rsyncs the bus to peer machines on write). smalltalk carries the talk; pty runs the terminals; convoy is the whole thing rolling down the road, sidecars and all.
 
+The philosophy behind all of it is in the [manifesto](MANIFESTO.md).
+
 ## Status
 
 Early but real. The CLI is a Swift SPM package that **orchestrates** the existing tools (it drives `st` and `pty`; it reimplements neither). `ls`, `doctor`, `init`, `add`, and `remove` work against the live bus today. A macOS menubar app (`Convoy.app`) ships from the same package. See [BUILD.md](BUILD.md).

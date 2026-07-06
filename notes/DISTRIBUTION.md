@@ -40,9 +40,8 @@ the build makes every line of it unnecessary.**
 
 ## Notarization drop-in (when creds land)
 
-Signing is already swappable (`CONVOY_SIGN_IDENTITY`). A Developer ID cert is present
-("Developer ID Application: Shareup Software Corporation"); the only missing piece is notarytool
-credentials. When they arrive:
+Signing is already swappable (`CONVOY_SIGN_IDENTITY`). Provide a Developer ID identity and
+notarytool credentials:
 
 ```sh
 # store creds once
@@ -50,7 +49,7 @@ xcrun notarytool store-credentials convoy \
     --apple-id <apple-id> --team-id <team-id> --password <app-specific-password>
 
 # sign with Developer ID instead of ad-hoc, then notarize + staple
-CONVOY_SIGN_IDENTITY="Developer ID Application: Shareup Software Corporation (762ZKAAPM9)" \
+CONVOY_SIGN_IDENTITY="Developer ID Application: <Your Name> (<TEAMID>)" \
     scripts/bundle.sh
 ditto -c -k --keepParent .build/bundler/Convoy.app Convoy.app.zip
 xcrun notarytool submit Convoy.app.zip --keychain-profile convoy --wait
