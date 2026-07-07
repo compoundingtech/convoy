@@ -12,6 +12,7 @@ import {
   type SessionInfo,
 } from "@myobie/pty/client";
 import { commandFingerprint, parseStrategyTags, type StrategyTags } from "./flapping-cap.ts";
+import { run } from "./exec.ts";
 
 /** One session as convoy's host sees it, projected from pty's typed `SessionInfo` + `SessionMetadata`. */
 export interface SupervisedSession {
@@ -110,5 +111,11 @@ export class PtyHost {
     } catch {
       return false;
     }
+  }
+
+  /** Stop a session (teardown). Residual `pty kill` shell — the client doesn't export a daemon-kill;
+   *  PTY_ROOT is already pinned in the process env by the constructor. */
+  async kill(name: string): Promise<boolean> {
+    return (await run("pty", ["kill", name])).ok;
   }
 }
