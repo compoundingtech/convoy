@@ -22,6 +22,7 @@ The guiding requirement: **it must be impossible to misconfigure an agent.** `co
 - `convoy add <role> --identity <id> [--mcp] [--network <path>] [--persona <path>] [--dry-run]` — add an agent, correct-by-construction. **Ding-only by default** (no MCP); `--mcp` opts into MCP wiring. Role → permission-mode/persona/posture are **derived**, never hand-set; wiring is dry-run-validated before launch.
 - `convoy remove <id> [--purge]` — remove an agent (teardown / decommission). The symmetric partner to `add`.
 - `convoy cos --repo <dir>` — bootstrap a Chief of Staff: create/point-at its private repo, then launch it (correct-by-construction). The CoS runs its own first-run interview on boot.
+- `convoy up <network> [--json] [--reconcile-interval <s>]` — **host a network in the foreground** (the TCC anchor + supervisor). Brings the network's permanent sessions up as its own children and reconciles them — respawn on exit (resuming the session), with a crash-loop **flapping-cap**. Run it in a TCC-granted terminal (kitty) so agents inherit its grants; `Ctrl-C` tears the network down cleanly. `--json` emits a machine-readable event stream.
 - `convoy init [dir]` — create + wire a smalltalk network folder (ST_ROOT, bus layout, hooks).
 - `convoy doctor` — the "will this actually work here?" check: tools installed, config sane, the bus round-trips, personas present.
 - `convoy ls [--live-only]` — list the convoy's members.
