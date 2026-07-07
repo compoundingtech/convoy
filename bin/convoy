@@ -1,0 +1,20 @@
+#!/usr/bin/env node
+// convoy — TypeScript entrypoint. Node (≥23.6) strips the types from the imported `.ts` at load, so
+// there is no build step (matches smalltalk's `--experimental-strip-types` convention). The command
+// surface (add/up/cos/init/ls/doctor/remove/personas) lands in src/cli.ts across milestones M4–M5;
+// for now this shim just proves the wiring.
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const here = dirname(fileURLToPath(import.meta.url));
+try {
+  const { main } = await import(join(here, "..", "src", "cli.ts"));
+  await main(process.argv.slice(2));
+} catch (err) {
+  if (err && typeof err === "object" && "code" in err && err.code === "ERR_MODULE_NOT_FOUND") {
+    console.error("convoy (TS): CLI not wired yet — see notes/TS-PORT-PLAN.md (M4/M5).");
+    process.exit(2);
+  }
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@myobie/convoy",
+  "version": "0.2.0-ts.0",
+  "description": "convoy — the single front door to a smalltalk agent network (TypeScript port; see notes/TS-PORT-PLAN.md)",
+  "type": "module",
+  "bin": {
+    "convoy": "./bin/convoy"
+  },
+  "engines": {
+    "node": ">=23.6"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "convoy": "node ./bin/convoy"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
+  }
+}
