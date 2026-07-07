@@ -3,16 +3,49 @@
 // SessionMetadata (tags, exitedAt, command/args) instead of a JSON re-parse; `spawnDaemon` for respawn
 // instead of `pty restart` (the spec §5.3 respawn primitive); `updateTags` for the strategy tags.
 
-import { basename, dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { randomBytes } from "node:crypto";
 import {
   isGone,
   listSessions,
+  readPtyFile,
   spawnDaemon,
   updateTags,
   type SessionInfo,
 } from "@myobie/pty/client";
 import { commandFingerprint, parseStrategyTags, type StrategyTags } from "./flapping-cap.ts";
-import { run } from "./exec.ts";
+import { childEnv, run } from "./exec.ts";
+
+function cleanEnv(overlay: NodeJS.ProcessEnv): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(childEnv(overlay))) if (v !== undefined) out[k] = v;
+  return out;
+}
+
+/** Spawn the sessions declared in `<dir>/pty.toml` natively via `spawnDaemon` — convoy owns the
+ *  spawn (the port's launch-absorb). `st launch` writes the wiring (pty.toml/persona) but its OWN
+ *  pty registration is a no-op post-cutover, so convoy does the spawn itself: reads the manifest
+ *  (readPtyFile), then spawnDaemon each session with the enriched PATH + the session's env, tagging
+ *  the ptyfile pair so `convoy up` recognizes + hosts it. */
+export async function spawnFromPtyFile(dir: string, root: string | null): Promise<{ spawned: string[]; failed: string[] }> {
+  if (root) process.env["PTY_ROOT"] = `${root}/pty`;
+  const file = readPtyFile(dir);
+  const tomlPath = join(dir, "pty.toml");
+  const spawned: string[] = [];
+  const failed: string[] = [];
+  for (const def of file.sessions) {
+    const name = def.id ?? `${def.shortName}-${randomBytes(3).toString("hex")}`;
+    const tags: Record<string, string> = { ...(def.tags ?? {}), ptyfile: tomlPath, "ptyfile.session": def.shortName };
+    const env = cleanEnv({ ...process.env, ...(def.env ?? {}), ...(root ? { ST_ROOT: root, PTY_ROOT: `${root}/pty` } : {}) });
+    try {
+      await spawnDaemon({ name, command: "sh", args: ["-c", def.command], displayCommand: def.command, cwd: dir, displayName: def.displayName, tags, env });
+      spawned.push(name);
+    } catch {
+      failed.push(def.shortName);
+    }
+  }
+  return { spawned, failed };
+}
 
 /** One session as convoy's host sees it, projected from pty's typed `SessionInfo` + `SessionMetadata`. */
 export interface SupervisedSession {

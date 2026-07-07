@@ -1,13 +1,42 @@
 // A thin promise wrapper around child_process for the few tools convoy still shells (`st`, `git`).
 // Most pty interaction is native via @myobie/pty/client (src/host.ts); this is the residual seam.
 
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { homedir } from "node:os";
 
 export interface ExecResult {
   status: number;
   stdout: string;
   stderr: string;
   readonly ok: boolean;
+}
+
+// An enriched PATH resolved once from the login shell, unioned with common tool locations + the
+// current PATH — ported from Swift's Shell.enrichedPath. A process launched with a minimal PATH (a
+// GUI .app, or a test harness spawning convoy) inherits only `/usr/bin:/bin`, so st/pty/claude
+// (installed under nvm etc.) wouldn't resolve. Forcing this on every child makes shell-outs and the
+// native `spawnDaemon` leaf resolve their tools identically from a terminal or a minimal spawn env.
+let _enriched: string | null = null;
+export function enrichedPath(): string {
+  if (_enriched !== null) return _enriched;
+  const dirs: string[] = [];
+  try {
+    const login = execFileSync("/bin/zsh", ["-lc", 'printf %s "$PATH"'], { encoding: "utf8" });
+    dirs.push(...login.split(":"));
+  } catch {
+    // no login shell — fall through to current PATH + common dirs
+  }
+  if (process.env["PATH"]) dirs.push(...process.env["PATH"].split(":"));
+  const home = process.env["HOME"] ?? homedir();
+  dirs.push("/opt/homebrew/bin", "/usr/local/bin", `${home}/.local/bin`, `${home}/bin`, "/usr/bin", "/bin", "/usr/sbin", "/sbin");
+  const seen = new Set<string>();
+  _enriched = dirs.filter((d) => d && !seen.has(d) && (seen.add(d), true)).join(":");
+  return _enriched;
+}
+
+/** Build a child env with PATH forced to the enriched value (deterministic tool resolution). */
+export function childEnv(overlay?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...(overlay ?? process.env), PATH: enrichedPath() };
 }
 
 export function run(
@@ -19,7 +48,7 @@ export function run(
     const child = execFile(
       cmd,
       args,
-      { cwd: opts.cwd, env: opts.env ?? process.env, maxBuffer: 32 * 1024 * 1024 },
+      { cwd: opts.cwd, env: childEnv(opts.env), maxBuffer: 32 * 1024 * 1024 },
       (err, stdout, stderr) => {
         const code = err && typeof err === "object" && "code" in err ? err.code : undefined;
         const status = typeof code === "number" ? code : err ? 1 : 0;

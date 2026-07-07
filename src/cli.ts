@@ -6,6 +6,14 @@ import { cmdAdd, cmdApp, cmdCos, cmdDoctor, cmdInit, cmdLs, cmdPersonas, cmdRemo
 export async function main(argv: string[]): Promise<void> {
   const cmd = argv[0];
   const rest = argv.slice(1);
+
+  // --help footgun: `convoy add --help` (etc.) must show help, never fall through to running the
+  // command (which would error on the missing required args). Handle it for every subcommand.
+  if (cmd !== undefined && cmd !== "--version" && (rest.includes("--help") || rest.includes("-h"))) {
+    printHelp();
+    process.exit(0);
+  }
+
   let code: number;
   switch (cmd) {
     case "ls":

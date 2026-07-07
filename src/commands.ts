@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { run } from "./exec.ts";
 import { Bus, isLive } from "./bus.ts";
-import { PtyHost } from "./host.ts";
+import { PtyHost, spawnFromPtyFile } from "./host.ts";
 import { baseFile, ensureInstalled, personasDir, personasInstalled } from "./personas.ts";
 import { ROLES, parseRole } from "./role.ts";
 import {
@@ -107,13 +107,23 @@ async function launchSpec(spec: AgentSpec, o: { dryRun: boolean }): Promise<numb
   }
 
   out(`Launching ${spec.identity}…`);
-  const res = await run("st", stLaunchArgs(spec, false), { cwd: spec.workingDir ?? undefined, env: launchEnv(spec) });
-  if (res.stdout) process.stdout.write(res.stdout);
-  if (!res.ok) {
-    err(`st launch failed: ${res.stderr.trim()}`);
+  // st launch writes the wiring (pty.toml / persona / ding-bus). `--fresh` skips the session-id
+  // bootstrap (`claude --print` needs stdin → hangs in a non-interactive shell-out); stdin is closed
+  // for safety. Its OWN pty registration no-ops post-cutover, so convoy owns the spawn (below).
+  const wire = await run("st", [...stLaunchArgs(spec, false), "--fresh"], { cwd: spec.workingDir ?? undefined, env: launchEnv(spec), input: "" });
+  if (wire.stdout) process.stdout.write(wire.stdout);
+  if (!wire.ok) {
+    err(`st launch (wiring) failed: ${wire.stderr.trim()}`);
     return 1;
   }
-  out(`✓ ${spec.identity} is under way. \`convoy ls\` to see it.`);
+  const dir = spec.workingDir ?? process.cwd();
+  const { spawned, failed } = await spawnFromPtyFile(dir, spec.networkRoot);
+  for (const f of failed) err(`session ${f} failed to spawn`);
+  if (spawned.length === 0) {
+    err(`no session spawned for ${spec.identity} (expected pty.toml at ${dir}/pty.toml)`);
+    return 1;
+  }
+  out(`✓ ${spec.identity} is under way (${spawned.join(", ")}). \`convoy ls\` to see it.`);
   return 0;
 }
 
