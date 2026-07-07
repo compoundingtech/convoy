@@ -168,6 +168,18 @@ export async function nativeLaunch(spec: AgentSpec): Promise<{ spawned: string[]
   writeContextFiles(dir, spec);
   writeHooks(dir);
   writePtyToml(dir, spec, sid);
+
+  // Create the agent's bus member folder BEFORE spawning `st ding`. The ding watcher errors at startup
+  // if `$ST_ROOT/<identity>/{inbox,archive}` is missing → the worker is never poked → it parks. `st
+  // launch` used to create these as part of launch wiring; convoy owns that wiring now, so this is
+  // convoy's root responsibility, and getting the ORDER right (folder → then ding) kills the race at
+  // the source. (smalltalk's `st ding mkdir -p` is defense-in-depth on top of this.)
+  if (spec.networkRoot) {
+    const member = join(spec.networkRoot, spec.identity);
+    mkdirSync(join(member, "inbox"), { recursive: true });
+    mkdirSync(join(member, "archive"), { recursive: true });
+  }
+
   return spawnFromPtyFile(dir, spec.networkRoot);
 }
 
