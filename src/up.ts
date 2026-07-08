@@ -131,14 +131,15 @@ export async function up(opts: UpOptions): Promise<number> {
     for (let left = interval * 4; left > 0 && !stop; left--) await sleep(250);
   } while (!stop);
 
-  // teardown
-  if (opts.keepSessions === true) {
-    emit({ type: "teardown", stopped: 0, kept: supervised.size }, `[convoy-up] stopping host; leaving ${supervised.size} session(s) running (--keep-sessions).`);
-  } else {
-    let stopped = 0;
-    for (const name of supervised) if (await host.kill(name)) stopped++;
-    emit({ type: "teardown", stopped }, `[convoy-up] stopped host; tore down ${stopped} session(s).`);
-  }
+  // teardown — DECOUPLED (Nomad model): stopping OR crashing the supervisor NEVER tears down the
+  // workloads. Agents are long-lived and keep running their last orders; a supervisor restart
+  // re-adopts the still-running sessions (the reconcile skips live ones — `if (!gone(s)) continue`).
+  // To intentionally stop the network, use `convoy down` (explicit teardown), not a `convoy up` stop.
+  void opts.keepSessions; // retained for API compat; teardown no longer kills regardless.
+  emit(
+    { type: "teardown", stopped: 0, kept: supervised.size },
+    `[convoy-up] stopping host; leaving ${supervised.size} session(s) running — agents are decoupled from the supervisor (use \`convoy down\` to tear down).`,
+  );
   lock.release();
   return 0;
 }
