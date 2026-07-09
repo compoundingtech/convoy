@@ -14,7 +14,7 @@ function info(over: Partial<SessionInfo> & { tags?: Record<string, string> } = {
       command: "sleep",
       args: ["100000"],
       displayCommand: "sleep 100000",
-      cwd: "/Volumes/SSD/src/github.com/myobie/convoy",
+      cwd: "/agents/convoy",
       createdAt: "2026-07-07T00:00:00.000Z",
       tags: tags ?? { role: "worker", strategy: "permanent", ptyfile: "/agents/convoy/pty.toml", "ptyfile.session": "claude" },
       ...(over.status === "exited" ? { exitedAt: "2026-07-07T00:01:00.000Z" } : {}),
