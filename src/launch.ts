@@ -12,6 +12,7 @@ import { spawnFromPtyFile } from "./host.ts";
 import { ensureInstalled } from "./personas.ts";
 import { resolvedPersonaPath, sessionId, specPermanent, specPermissionMode, type AgentSpec } from "./agent-spec.ts";
 import type { Role } from "./role.ts";
+import { pretrustDir } from "./trust.ts";
 
 const HARNESS_SESSION = "claude"; // the pty session key for the agent's main session (claude harness)
 
@@ -191,6 +192,10 @@ function writeContextFiles(dir: string, spec: AgentSpec): void {
 export async function nativeLaunch(spec: AgentSpec): Promise<{ spawned: string[]; failed: string[] }> {
   const dir = spec.workingDir ?? process.cwd();
   mkdirSync(dir, { recursive: true });
+
+  // Pre-trust the agent's repo folder so its cold-started claude never hits the workspace-trust dialog
+  // (nothing clears it now that the launch command has no auto-poker). Best-effort — never blocks launch.
+  pretrustDir(dir);
 
   // Footgun-proof: clone role personas if missing (no override).
   if (spec.personaOverride === null) {
