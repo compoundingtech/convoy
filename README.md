@@ -1,6 +1,6 @@
 # convoy
 
-The orchestrator for a [smalltalk](https://github.com/myobie/smalltalk) agent network — the tool you use to stand up and run your crew of agents.
+The orchestrator for a [smalltalk](https://github.com/compoundingtech/smalltalk) agent network — the tool you use to stand up and run your crew of agents.
 
 Where the pieces sit:
 - **smalltalk** — the message bus (send / read / archive / status / agents / context).
@@ -13,7 +13,7 @@ The philosophy behind all of it is in the [manifesto](MANIFESTO.md).
 
 ## Status
 
-Early but real. The CLI is a Swift SPM package that **orchestrates** the existing tools (it drives `st` and `pty`; it reimplements neither). `ls`, `doctor`, `init`, `add`, and `remove` work against the live bus today. A macOS menubar app (`Convoy.app`) ships from the same package. See [BUILD.md](BUILD.md).
+Early but real. The CLI is a **TypeScript package** (Node ≥23.6, which strips the types at load — no build step) that **orchestrates** the existing tools (it drives `st` and `pty`; it reimplements neither). `ls`, `doctor`, `init`, `add`, `remove`, `cos`, `up`, `down`, and `reload` work against the live bus today. The macOS menubar app (`Convoy.app`) lives in a separate `convoy-macos` repo. See [BUILD.md](BUILD.md).
 
 The guiding requirement: **it must be impossible to misconfigure an agent.** `convoy add` takes high-level intent and derives all wiring correct-by-construction, validated before launch — see [notes/ACCEPTANCE.md](notes/ACCEPTANCE.md).
 
@@ -22,7 +22,9 @@ The guiding requirement: **it must be impossible to misconfigure an agent.** `co
 - `convoy add <role> --identity <id> [--mcp] [--network <path>] [--persona <path>] [--dry-run]` — add an agent, correct-by-construction. **Ding-only by default** (no MCP); `--mcp` opts into MCP wiring. Role → permission-mode/persona/posture are **derived**, never hand-set; wiring is dry-run-validated before launch.
 - `convoy remove <id> [--purge]` — remove an agent (teardown / decommission). The symmetric partner to `add`.
 - `convoy cos --repo <dir>` — bootstrap a Chief of Staff: create/point-at its private repo, then launch it (correct-by-construction). The CoS runs its own first-run interview on boot.
-- `convoy up <network> [--json] [--reconcile-interval <s>]` — **host a network in the foreground** (the TCC anchor + supervisor). Brings the network's permanent sessions up as its own children and reconciles them — respawn on exit (resuming the session), with a crash-loop **flapping-cap**. Run it in a TCC-granted terminal (kitty) so agents inherit its grants; `Ctrl-C` tears the network down cleanly. `--json` emits a machine-readable event stream.
+- `convoy up <network> [--json] [--reconcile-interval <s>]` — **host a network in the foreground** (the TCC anchor + supervisor). Brings the network's permanent sessions up as its own children and reconciles them — respawn on exit, with a crash-loop **flapping-cap**. Run it in a TCC-granted terminal (kitty) so agents inherit its grants. Stopping `convoy up` **leaves agents running** (they're decoupled from the supervisor); `--json` emits a machine-readable event stream.
+- `convoy down [network] [--dry-run] [--force] [--json]` — **tear down the network**: the *only* command that kills sessions. Refuses while a `convoy up` host holds the network (it would respawn what you kill) unless `--force`.
+- `convoy reload <id> [--dry-run]` — re-materialize an agent from its `pty.toml` (kill + respawn), picking up edits to its permission-mode / persona / ding wiring.
 - `convoy init [dir]` — create + wire a smalltalk network folder (ST_ROOT, bus layout, hooks).
 - `convoy doctor` — the "will this actually work here?" check: tools installed, config sane, the bus round-trips, personas present.
 - `convoy ls [--live-only]` — list the convoy's members.
@@ -33,23 +35,6 @@ The guiding requirement: **it must be impossible to misconfigure an agent.** `co
 
 - [Driving your convoy remotely](docs/remote-control.md) — steer any member (especially your CoS) from
   your phone or a browser via Claude Code Remote Control, and the restart gotcha for a hosted network.
-
-## Shell completions
-
-convoy generates completion scripts for bash, zsh, and fish — with value completion for
-roles (`chief-of-staff`, `worker`, …), transports (`mcp`/`ding`), harnesses (`claude`/`codex`),
-and directory/file completion for `--network`, `--dir`, `--repo`, and `--persona`.
-
-```sh
-# zsh — write to a dir on your $fpath, then restart your shell
-convoy --generate-completion-script zsh > ~/.zsh/completions/_convoy
-
-# bash — source it from your ~/.bashrc
-convoy --generate-completion-script bash > ~/.local/share/bash-completion/completions/convoy
-
-# fish
-convoy --generate-completion-script fish > ~/.config/fish/completions/convoy.fish
-```
 
 ## License
 

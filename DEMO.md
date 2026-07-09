@@ -55,11 +55,11 @@ convoy ls              # the same network, from the CLI
 ## The point (talking track)
 
 - **Footgun-proof by construction.** `convoy add`/`cos` take high-level intent and *derive* every
-  wiring — permission mode from role, ENV, tags, transport, hooks — validate it, dry-run `st
-  launch`, and launch only on clean wiring. You cannot misconfigure an agent (`notes/ACCEPTANCE.md`).
+  wiring — permission mode from role, ENV, tags, transport, hooks — validate it, dry-run the derived
+  wiring, and launch only when it's clean. You cannot misconfigure an agent (`notes/ACCEPTANCE.md`).
 - **Orchestrates, doesn't reimplement.** smalltalk is the bus, pty the sessions; convoy ties them
   into one story (`MANIFESTO.md`).
-- **One artifact.** CLI + menubar app from one Swift package, shipped by one brew cask.
+- **One install.** The convoy CLI, installed by one brew cask (the `Convoy.app` menubar host ships from the separate `convoy-macos` repo).
 
 ## Rehearsal
 
