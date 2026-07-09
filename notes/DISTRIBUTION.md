@@ -16,7 +16,7 @@ ditto -c -k --sequesterRsrc stage convoy-<version>-macos-arm64.zip
 shasum -a 256 convoy-<version>-macos-arm64.zip     # → cask sha256
 
 # 3. GitHub release
-gh release create v<version> convoy-<version>-macos-arm64.zip --repo myobie/convoy --prerelease
+gh release create v<version> convoy-<version>-macos-arm64.zip --repo compoundingtech/convoy --prerelease
 
 # 4. Update the tap cask (version + sha256) and push myobie/homebrew-convoy
 ```

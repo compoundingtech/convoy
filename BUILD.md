@@ -1,46 +1,47 @@
 # Building convoy
 
-One Swift SPM package produces both the `convoy` CLI and `Convoy.app` (the menubar host). No
-Xcode project — plain SPM + [Swift Bundler](https://swiftbundler.dev/) for the `.app`.
+convoy is a **TypeScript** CLI that runs on Node — there is **no build step**. Node (≥23.6) strips
+the types from the imported `.ts` at load (the same `--experimental-strip-types` convention as
+smalltalk), so `bin/convoy` runs the sources directly.
 
 ## Requirements
 
-- Swift 6+ (`swift --version`)
-- macOS 13+ (MenuBarExtra)
-- `st` + `pty` on PATH (the tools convoy orchestrates)
-- For the app bundle: `swift-bundler` (installed in the packaging step)
+- Node ≥ 23.6 (`node --version`) — for native `.ts` type-stripping
+- `st` (smalltalk) + `pty` on PATH — the tools convoy orchestrates
+- the sibling `../pty` and `../smalltalk` repos checked out — convoy depends on `@myobie/pty`
+  locally (`file:../pty`) and references smalltalk's hook scripts by path
+- macOS (agents run in a TCC-granted terminal)
 
-## CLI
-
-```sh
-swift build --product convoy            # debug → .build/debug/convoy
-swift build -c release --product convoy # release → .build/release/convoy
-swift test                              # ConvoyKit unit tests (AC-1 derivation, JSON binder)
-```
-
-Try it against the live bus:
+## Install deps
 
 ```sh
-.build/debug/convoy ls
-.build/debug/convoy doctor
-.build/debug/convoy add worker --identity demo-wk --dry-run   # shows derived wiring; launches nothing
+npm install
 ```
 
-## App bundle (Convoy.app)
-
-The menubar app is the `ConvoyApp` executable target, bundled into `Convoy.app` by Swift Bundler
-(config in `Bundler.toml`, Info.plist keys included: `LSUIElement`, Calendar usage description,
-etc.). Ad-hoc signed for local/demo use; the signing identity is swappable so Developer ID +
-notarization drops in later without code changes.
+## Run it
 
 ```sh
-# packaging step — see Bundler.toml (added in the app-packaging change)
-swift bundler bundle -c release        # → .build/bundler/Convoy.app
-codesign --deep --force -s - .build/bundler/Convoy.app   # ad-hoc
-convoy app install --bundle .build/bundler/Convoy.app    # copy to /Applications (non-brew path)
+./bin/convoy --version
+./bin/convoy ls
+./bin/convoy doctor
+./bin/convoy add worker --identity demo-wk --dry-run   # shows derived wiring; launches nothing
 ```
+
+Put `bin/convoy` on your PATH (or `npm link`) to run it as `convoy` from anywhere.
+
+## Test + typecheck
+
+```sh
+npm test           # vitest — pure-core unit tests (derivation, flapping-cap, launch wiring, …)
+npm run typecheck  # tsc --noEmit
+```
+
+## The macOS app
+
+The `Convoy.app` menubar host lives in a separate **`convoy-macos`** repo (SwiftUI). This repo is
+the CLI only.
 
 ## Distribution
 
-`brew install --cask myobie/convoy/convoy` installs `Convoy.app` to `/Applications` and symlinks
-the `convoy` CLI. See the `myobie/homebrew-convoy` tap.
+`brew install --cask myobie/convoy/convoy` installs convoy via the `myobie/homebrew-convoy` tap.
+See [notes/DISTRIBUTION.md](notes/DISTRIBUTION.md) for the release + packaging flow.

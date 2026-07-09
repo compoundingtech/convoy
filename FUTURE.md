@@ -24,5 +24,5 @@ Captured for later — **not** part of v0 (CLI + app + install story). Here so t
   the agent dies on its **first commit** (`fatal: this operation must be run in a work tree`). The
   launch path (or a `convoy doctor` check) should detect this and repair it per-worktree
   (`git -C <wt> config --worktree core.bare false`) so a launched agent gets a functional worktree.
-  Acceptance test: st-evals `cells/weird-git-setup` (found by evals-claude). Pairs with the
+  Acceptance test: compoundingtech/evals `cells/weird-git-setup` (found by evals-claude). Pairs with the
   megarepo/worktree-per-agent substrate above.
