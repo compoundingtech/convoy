@@ -7,7 +7,7 @@
 // Isolation + graded-run patterns are cribbed from evals' fixtures (ghost-bug / team-standup), vendored so
 // doctor is self-contained on a user machine (no evals-repo dependency at runtime).
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -140,7 +140,7 @@ export async function runReadinessSuite(): Promise<number> {
   results.push(await checkDings());
   results.push(await checkStateExternalization());
   results.push(await checkExactlyOnce());
-  // checkDings + checkDevTask land next.
+  results.push(await checkDevTask());
 
   // Prod-untouched gate — the isolation proof.
   const prodAfter = await ptySessionNames();
@@ -367,6 +367,119 @@ export async function checkExactlyOnce(): Promise<CheckResult> {
     if (!reDrained) return { name, pass: false, detail: "after restart the agent didn't re-drain the re-delivered message (inbox stayed non-empty)", fix: "the cold-booted agent didn't process its inbox — check the SessionStart boot ritual (check 4)" };
 
     return { name, pass: true, detail: "processed once → re-delivered + cold-restarted → re-drained WITHOUT re-acting (token exactly once), all isolated" };
+  } finally {
+    await teardownSandbox(box);
+  }
+}
+
+/** Did `recipient` receive at least one message from `sender` (inbox OR archive) on the sandbox bus? Agents
+ *  archive a message once they act on it, so a completed hop lands in the archive — we count both. */
+async function receivedFrom(box: Sandbox, recipient: string, sender: string): Promise<boolean> {
+  const inbox = parseCount((await runSt(box, ["message", "ls", recipient, "--from", sender, "--count"])).stdout);
+  const arch = parseCount((await runSt(box, ["message", "ls", recipient, "--archive", "--from", sender, "--count"])).stdout);
+  return (Number.isFinite(inbox) ? inbox : 0) + (Number.isFinite(arch) ? arch : 0) >= 1;
+}
+
+/** CHECK 3 (the capstone) — the CoS→supervisor→worker org model produces a REAL graded fix. Spins a 3-tier
+ *  tree in an isolated sandbox: a thin doctor-CoS (triage+delegate, no first-run interview) → a thin
+ *  doctor-supervisor (relay, no cron/no spawn — the real supervisor persona's watchdog-cron + spawning would
+ *  break doctor's self-cleaning) → the user's REAL worker persona on the leaf, which owns a bundled buggy
+ *  'labelkit' repo. We seed a kick to the CoS to fix a real deterministic bug (the ghost-bug: a shared-default
+ *  mutation), and grade held-out + ground-truth: (a) the worker's repo passes a MUTATION-VALID grader that
+ *  lives outside the repo and provably FAILS on the pristine buggy base; (b) a fix commit landed on top of the
+ *  base touching src/format.js (only the worker has a git repo → worker-only authorship); (c) the delegation
+ *  is visible on the bus at BOTH hops (cos→sup, sup→wk). Fully isolated + torn down; prod untouched.
+ *
+ *  SCOPE (be honest so a PASS isn't over-read): this proves the 3-tier delegation CHAIN + a real graded worker
+ *  fix + the hard gates. It deliberately does NOT exercise the full autonomous orchestration of the user's
+ *  real CoS/supervisor personas — those are PERSISTENT-ORCHESTRATOR designs (first-run interview, watchdog
+ *  cron, worker-spawning) that cannot run inside a bounded, self-cleaning one-shot; the two upper tiers are
+ *  thin deterministic stand-ins on purpose. The real WORKER persona (the tier that does the work) IS loaded. */
+export async function checkDevTask(): Promise<CheckResult> {
+  const name = "dev task — CoS→supervisor→worker delegation + graded fix";
+  let box: Sandbox;
+  try {
+    box = makeSandbox("dev");
+  } catch (e) {
+    return { name, pass: false, detail: e instanceof Error ? e.message : String(e), fix: "set TMPDIR to a shorter path (pty sockets must fit ~104 bytes)" };
+  }
+  try {
+    const init = await runConvoy(box, ["init", box.net, "--no-channel"]);
+    if (!init.ok) return { name, pass: false, detail: `convoy init failed: ${init.stderr.trim() || init.stdout.trim()}`, fix: "run `convoy doctor --quick`" };
+
+    // Materialize the bundled buggy 'labelkit' repo as the worker's territory (git repo, buggy base committed
+    // so the worker commits the fix ON TOP + we have a base to diff). Repo-local git identity so the worker's
+    // commit succeeds even on a machine with no global git user configured.
+    const repo = join(box.sb, "doctor-wk"); // basename == identity (teardown/reload match on norm(basename))
+    mkdirSync(repo, { recursive: true });
+    cpSync(fixture("ghost-bug"), repo, { recursive: true });
+    const git = async (...a: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> => {
+      const r = await run("git", a, { cwd: repo, env: box.env });
+      return { ok: r.ok, stdout: r.stdout, stderr: r.stderr };
+    };
+    for (const a of [["init", "-q"], ["config", "user.name", "doctor-worker"], ["config", "user.email", "worker@doctor.local"], ["add", "-A"], ["commit", "-q", "-m", "labelkit: initial (buggy)"]]) {
+      const r = await git(...a);
+      if (!r.ok) return { name, pass: false, detail: `git ${a[0]} failed: ${r.stderr.trim()}`, fix: "git is required for the dev-task check — install it and re-run" };
+    }
+    const baseSha = (await git("rev-parse", "HEAD")).stdout.trim();
+
+    // Spin the tree. Worker = the user's REAL worker persona (no override — the tier that DOES the work). The
+    // two upper tiers are spawned as `supervisor` role (worker boot = no interview) with thin doctor personas.
+    const spawns: Array<{ role: string; id: string; dir: string; persona: string | null }> = [
+      { role: "worker", id: "doctor-wk", dir: repo, persona: null }, // the user's REAL worker.md (no override)
+      { role: "supervisor", id: "doctor-sup", dir: join(box.sb, "doctor-sup"), persona: fixture("doctor-supervisor-persona.md") },
+      { role: "supervisor", id: "doctor-cos", dir: join(box.sb, "doctor-cos"), persona: fixture("doctor-cos-persona.md") },
+    ];
+    for (const s of spawns) {
+      if (s.id !== "doctor-wk") mkdirSync(s.dir, { recursive: true });
+      const args = ["add", s.role, "--identity", s.id, "--network", box.net, "--dir", s.dir, ...(s.persona ? ["--persona", s.persona] : [])];
+      const add = await runConvoy(box, args);
+      if (!add.ok) return { name, pass: false, detail: `convoy add ${s.id} failed: ${add.stderr.trim() || add.stdout.trim()}`, fix: "a tier failed to spawn — `convoy doctor --quick` (Hooks/Personas)" };
+    }
+
+    // Wait for all three tiers to boot + go available.
+    const ids = ["doctor-cos", "doctor-sup", "doctor-wk"];
+    const allUp = await pollUntil(async () => {
+      for (const id of ids) if ((await runSt(box, ["status", id])).stdout.trim() !== "available") return false;
+      return true;
+    }, 180_000);
+    if (!allUp) return { name, pass: false, detail: "not all three tiers booted to available", fix: "a tier didn't boot — check claude auth (`/login`), then re-run; or `convoy doctor --quick`" };
+
+    // Seed the kick into the CoS's inbox — a crisp, unambiguous task (symptom, not the fix).
+    const kick = [
+      "TASK — fix a real bug, then report done.",
+      "The worker doctor-wk owns a small ESM lib 'labelkit' (its working directory).",
+      "BUG: calling format(label, {custom options}) permanently CORRUPTS the shared default options, so every",
+      "later default-options call is wrong. The root cause is a mutating merge in src/format.js.",
+      "FIX: make the merge non-mutating so the shared defaults are never modified; keep the existing test suite green.",
+      "Then COMMIT the fix in the repo (git add -A && git commit -m ...) and report 'done' back up the chain.",
+    ].join(" ");
+    const send = await runSt(box, ["message", "send", "doctor-cos", "-m", kick]);
+    if (!send.ok) return { name, pass: false, detail: `seeding the kick failed: ${send.stderr.trim()}`, fix: "the bus rejected the kick — check `st` on PATH" };
+
+    // Poll until the worker's repo passes the HELD-OUT grader (fix landed + behaves). Generous budget — a false
+    // FAIL from a too-tight timeout would erode trust in doctor itself.
+    const grader = fixture("grader", "ghost-bug-regression.mjs");
+    const fixed = await pollUntil(async () => (await run("node", [grader, repo])).ok, 420_000, 6000);
+    if (!fixed) return { name, pass: false, detail: "the CoS→sup→worker chain did not produce a working fix within the budget", fix: "delegation stalled or the worker didn't fix+commit — confirm the tiers boot + the bus delivers (checks 2/2b) and re-run" };
+
+    // GRADE (held-out, ground-truth).
+    const detectsBug = !(await run("node", [grader, fixture("ghost-bug")])).ok; // mutation-valid: fails on buggy base
+    const headSha = (await git("rev-parse", "HEAD")).stdout.trim();
+    const committed = headSha !== baseSha;
+    const touchedFormat = (await git("diff", "--name-only", baseSha, "HEAD")).stdout.includes("src/format.js");
+    const cosToSup = await receivedFrom(box, "doctor-sup", "doctor-cos");
+    const supToWk = await receivedFrom(box, "doctor-wk", "doctor-sup");
+
+    const gaps: string[] = [];
+    if (!detectsBug) gaps.push("the held-out grader did not fail on the buggy base (mutation-validity broken — file a bug)");
+    if (!committed) gaps.push("no commit landed on top of the base (the worker didn't commit the fix)");
+    if (!touchedFormat) gaps.push("the fix commit didn't touch src/format.js");
+    if (!cosToSup) gaps.push("no delegation from doctor-cos → doctor-sup on the bus");
+    if (!supToWk) gaps.push("no delegation from doctor-sup → doctor-wk on the bus");
+    if (gaps.length) return { name, pass: false, detail: `a working fix appeared but the org-model grade failed: ${gaps.join("; ")}`, fix: "the fix landed without a clean CoS→sup→worker chain — inspect the bus + git authorship" };
+
+    return { name, pass: true, detail: "CoS→supervisor→worker delegated a real bug; the worker fixed + committed it (mutation-valid held-out grade); both delegation hops visible on the bus; all isolated" };
   } finally {
     await teardownSandbox(box);
   }
