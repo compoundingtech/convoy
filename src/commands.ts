@@ -4,7 +4,9 @@
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { run } from "./exec.ts";
+import { defaultBinDir, installClis } from "./install-cli.ts";
 import { Bus, isLive } from "./bus.ts";
 import { PtyHost, spawnFromPtyFile, type SupervisedSession } from "./host.ts";
 import { discoverSmalltalkDir, nativeLaunch } from "./launch.ts";
@@ -246,6 +248,41 @@ export async function cmdDoctor(args: string[]): Promise<number> {
   // spawn only isolated throwaway agents; the prod network stays untouched.
   if (full) return runFullOrgSuite();
   return runReadinessSuite();
+}
+
+/** `convoy install-cli [--bin <dir>]` — symlink convoy + st + pty into a writable PATH dir (default
+ *  ~/.local/bin), reliably + idempotently, WITHOUT the global `npm link` footgun. Run it the first time via
+ *  `node <convoy-clone>/bin/convoy install-cli` (convoy runs through node before it's on PATH). Verifies the
+ *  links + whether the dir is on PATH, printing the shell-specific line to add it if not. Portable (macOS/Linux). */
+export async function cmdInstallCli(args: string[]): Promise<number> {
+  const bad = unknownFlag(args, [], ["--bin"]);
+  if (bad) {
+    err(`unrecognized flag "${bad}" for \`convoy install-cli\`. Usage: convoy install-cli [--bin <dir>].`);
+    return 2;
+  }
+  const convoyRoot = dirname(dirname(fileURLToPath(import.meta.url))); // src/commands.ts → src → repo root
+  const binArg = optValue(args, "--bin");
+  const binDir = binArg ? resolve(expandTilde(binArg)) : defaultBinDir();
+  out(`convoy install-cli — linking convoy, st, pty into ${binDir}`);
+
+  const r = installClis(convoyRoot, binDir);
+  for (const t of r.linked) out(`  ✓ ${t} → ${join(binDir, t)}`);
+  for (const m of r.missingSources) {
+    const repo = m.tool === "st" ? "smalltalk" : m.tool; // st lives in the smalltalk repo
+    out(`  ✗ ${m.tool}: source not found at ${m.source} — clone \`${repo}\` as a sibling of the convoy repo, then re-run`);
+  }
+  for (const c of r.conflicts) out(`  ✗ ${c.tool}: ${c.target} already exists and is NOT a convoy-managed symlink — remove it, then re-run (refusing to clobber it)`);
+
+  if (!r.ok) {
+    err("install-cli incomplete — resolve the ✗ lines above.");
+    return 1;
+  }
+  if (r.onPath) {
+    out(`\n✓ convoy, st, pty linked and ${binDir} is on your PATH — run \`convoy doctor --quick\` to confirm the rest.`);
+    return 0;
+  }
+  out(`\n• Linked — but ${binDir} is NOT on your PATH yet. Add it:\n    ${r.pathHint}\n  Then run \`convoy doctor --quick\`.`);
+  return 0;
 }
 
 export async function cmdInit(args: string[]): Promise<number> {
