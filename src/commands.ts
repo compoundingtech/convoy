@@ -1,7 +1,7 @@
 // convoy CLI command handlers, ported from Sources/convoy/Commands/*.swift + Runner.swift. Each
 // returns an exit code. Small arg helpers keep the hand-rolled parsing consistent (like pty's cli.ts).
 
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -165,6 +165,27 @@ function resolveTransport(args: string[]): Transport | null {
   return raw === "mcp" || raw === "ding" ? raw : null;
 }
 
+/** Which harness(es) this setup actually USES — so the auth check hard-fails only those and treats an
+ *  installed-but-unused harness's signout as a WARN (don't red-fail a valid setup). Reads the network's member
+ *  pty.toml files (via the `ptyfile` tag) for their harness session key; a fresh/empty network defaults to the
+ *  default harness (claude). Best-effort — any error falls back to the default. */
+async function usedHarnesses(network: string | null): Promise<Set<Harness>> {
+  const used = new Set<Harness>();
+  try {
+    for (const s of await new PtyHost(network).sessions()) {
+      const pf = s.tags["ptyfile"];
+      if (!pf || !existsSync(pf)) continue;
+      const toml = readFileSync(pf, "utf8");
+      if (toml.includes("[sessions.codex]")) used.add("codex");
+      if (toml.includes("[sessions.claude]")) used.add("claude");
+    }
+  } catch {
+    // best-effort — fall through to the default
+  }
+  if (used.size === 0) used.add("claude"); // fresh / no network → the default harness
+  return used;
+}
+
 // ---- commands ----
 export async function cmdDoctor(args: string[]): Promise<number> {
   const badFlag = unknownFlag(args, ["--quick", "--full"], ["--network"]);
@@ -236,9 +257,12 @@ export async function cmdDoctor(args: string[]): Promise<number> {
 
   // Auth — a REAL signed-in probe per installed harness (a cred on disk is not enough: it can be present but
   // revoked, which only surfaces when a spawn later fails). Capability-detected + probed in parallel; a few
-  // seconds of latency buys catching the machine-wide-signout failure mode up front.
+  // seconds of latency buys catching the machine-wide-signout failure mode up front. HARD-fails only the
+  // harness(es) this setup USES (from the network, or claude when fresh) — an installed-but-unused harness that's
+  // signed out is a WARN, so a claude-only setup with codex merely installed still passes green.
   out("Auth");
-  const authOutcomes = await authReadiness();
+  const used = await usedHarnesses(network);
+  const authOutcomes = await authReadiness(undefined, undefined, (h) => used.has(h));
   for (const o of authOutcomes) {
     bullet(o.ok, o.ok === false && o.fix ? `${o.detail} — ${o.fix}` : o.detail);
     if (o.ok === false) failures++;

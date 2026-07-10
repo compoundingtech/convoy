@@ -74,8 +74,14 @@ note "failure paths — the preflight must catch each break"
 mkdir -p "$FRESH_HOME/empty-claude"
 # a long TMPDIR overflows the pty-socket budget
 expect_output "long TMPDIR → caught" "TMPDIR is too long" -- HOME="$FRESH_HOME" PATH="$FRESH_PATH" TMPDIR="$LONG_TMP" -- doctor --quick
-# a signed-out harness (fresh HOME strips codex; empty config strips claude where the keychain doesn't hold it)
-expect_output "signed-out harness → caught" "is NOT signed in" -- HOME="$FRESH_HOME" PATH="$FRESH_PATH" CLAUDE_CONFIG_DIR="$FRESH_HOME/empty-claude" -- doctor --quick
+# An INSTALLED-but-UNUSED signed-out harness is a WARN, not a hard FAIL (the "don't red-fail a valid setup"
+# rule): on a fresh network (no codex members) a signed-out codex must NOT block. FRESH_NET pins ST_ROOT/PTY_ROOT
+# so we don't inherit this machine's network (which may include codex agents → codex would count as "used").
+# (fresh HOME → ~/.codex absent → codex signed-out.) The REQUIRED-harness HARD-fail path can't be forced in a
+# clean room — macOS keeps Claude's OAuth in the keychain, so a fresh HOME/config can't sign Claude out — so
+# it's covered by the auth unit tests + a live run against a network that actually uses the signed-out harness.
+FRESH_NET="$FRESH_HOME/net"
+expect_output "unused signed-out codex → WARN, not a hard fail" "installed but not signed in" -- HOME="$FRESH_HOME" PATH="$FRESH_PATH" ST_ROOT="$FRESH_NET" PTY_ROOT="$FRESH_NET/pty" -- doctor --quick
 # too-old Node → caught (simulate by asking a check that always runs; Node is real here, so assert the OS line prints)
 expect_output "preflight runs the Environment section" "Node" -- HOME="$FRESH_HOME" PATH="$FRESH_PATH" -- doctor --quick
 
