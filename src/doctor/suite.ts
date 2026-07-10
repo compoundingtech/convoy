@@ -137,6 +137,7 @@ export async function runReadinessSuite(): Promise<number> {
 
   const results: CheckResult[] = [];
   results.push(await checkTmpNetwork());
+  results.push(await checkDings());
   // checkDings + checkDevTask land next.
 
   // Prod-untouched gate — the isolation proof.
@@ -165,4 +166,69 @@ export async function runReadinessSuite(): Promise<number> {
   }
   out(`✗ ${failed} readiness check${failed === 1 ? "" : "s"} failed — see the → fix lines above.`);
   return 1;
+}
+
+/** Run an `st` (smalltalk bus) command against the sandbox's ST_ROOT. */
+async function runSt(box: Sandbox, args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  const r = await run("st", args, { env: box.env });
+  return { ok: r.ok, stdout: r.stdout, stderr: r.stderr };
+}
+
+/** Poll `fn` until it returns true or the timeout elapses. (Normal runtime — Date.now/setTimeout are fine.) */
+async function pollUntil(fn: () => Promise<boolean>, timeoutMs: number, intervalMs = 3000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await fn()) return true;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return fn();
+}
+
+/** Parse an `st message ls --count` output to a number (handles "0" and "# 0 messages in inbox"). */
+function parseCount(s: string): number {
+  const m = s.match(/\d+/);
+  return m ? Number.parseInt(m[0], 10) : NaN;
+}
+
+/** CHECK 2 — inbox + ding delivery end to end. Spawns an idle recipient, waits until it's booted +
+ *  available (it drains its empty inbox on boot), THEN sends it a message: a working `st ding` sidecar must
+ *  POKE the idle agent so it drains (archives) the message. If the ding is broken (global pty bin off PATH),
+ *  the idle agent is never poked and the inbox stays non-empty — the exact silent ding-outage this catches. */
+export async function checkDings(): Promise<CheckResult> {
+  const name = "inboxes + dings — end-to-end delivery";
+  let box: Sandbox;
+  try {
+    box = makeSandbox("ding");
+  } catch (e) {
+    return { name, pass: false, detail: e instanceof Error ? e.message : String(e), fix: "set TMPDIR to a shorter path (pty sockets must fit ~104 bytes)" };
+  }
+  try {
+    const init = await runConvoy(box, ["init", box.net, "--no-channel"]);
+    if (!init.ok) return { name, pass: false, detail: `convoy init failed: ${init.stderr.trim() || init.stdout.trim()}`, fix: "run `convoy doctor --quick` — st/pty/bus" };
+
+    const rxDir = join(box.sb, "rx");
+    mkdirSync(rxDir, { recursive: true });
+    const add = await runConvoy(box, ["add", "worker", "--identity", "doctor-rx", "--network", box.net, "--dir", rxDir, "--persona", fixture("worker-persona.md")]);
+    if (!add.ok) return { name, pass: false, detail: `convoy add failed: ${add.stderr.trim() || add.stdout.trim()}`, fix: "spawn failed — `convoy doctor --quick` (Hooks/Personas)" };
+
+    // Wait for the recipient to boot + go available (its SessionStart boot ritual sets status + drains).
+    const avail = await pollUntil(async () => (await runSt(box, ["status", "doctor-rx"])).stdout.trim() === "available", 120_000);
+    if (!avail) return { name, pass: false, detail: "recipient never became available (didn't boot)", fix: "the agent didn't boot — check claude auth (`/login`) then re-run; or `convoy doctor --quick`" };
+
+    // Send it a message; a working ding must poke the (idle) agent so it drains + archives.
+    const send = await runSt(box, ["message", "send", "doctor-rx", "-m", "doctor ding probe — read and archive this, then stand by"]);
+    if (!send.ok) return { name, pass: false, detail: `st message send failed: ${send.stderr.trim()}`, fix: "the bus rejected the message — check `st` on PATH" };
+
+    const drained = await pollUntil(async () => {
+      const c = await runSt(box, ["message", "ls", "doctor-rx", "--count"]);
+      return c.ok && parseCount(c.stdout) === 0;
+    }, 120_000);
+    if (!drained) {
+      return { name, pass: false, detail: "message reached the bus but the available recipient never processed it (inbox stayed non-empty)", fix: "the agent was up + available but its `st ding` sidecar never POKED it — the global pty bin is likely broken or off PATH (this is exactly the silent ding-outage)" };
+    }
+
+    return { name, pass: true, detail: "sent a message → ding poked the recipient → it drained its inbox, all isolated" };
+  } finally {
+    await teardownSandbox(box);
+  }
 }
