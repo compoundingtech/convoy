@@ -53,6 +53,7 @@ export function makeSandbox(tag: string): Sandbox {
     rmSync(sb, { recursive: true, force: true });
     throw new Error(`sandbox network path too long (${bytes} bytes) — set TMPDIR to a shorter dir`);
   }
+  _sandboxPaths.add(sb); // for the end-of-suite backstop sweep
   return { sb, net, env: { ...process.env, ST_ROOT: net, PTY_ROOT: join(net, "pty") } };
 }
 
@@ -82,24 +83,40 @@ export async function ptySessionNames(env?: NodeJS.ProcessEnv): Promise<Set<stri
   }
 }
 
-/** Tear the sandbox down: kill its sessions (convoy down --force), wait for the pty daemon to actually let go,
- *  then remove the dir. Best-effort. The wait matters for self-cleaning: `convoy down` returns before the pty
- *  daemon finishes flushing its registry files, so a bare rmSync races a lagging write that would recreate
- *  `<net>/pty/*.json` right after we deleted the tree — leaving a leftover dir. Polling until no live session
- *  remains lets the daemon settle first. */
+/** Every sandbox path makeSandbox has minted this run, for the end-of-suite backstop sweep. */
+const _sandboxPaths = new Set<string>();
+
+/** Tear the sandbox down: kill its sessions (convoy down --force), then remove the dir. Best-effort. Removal
+ *  needs a retry loop for full self-cleaning: `convoy down` kills the sessions, but the pty-daemon's SIGTERM
+ *  handler FLUSHES the exited-session metadata into `<net>/pty/*.json` a few seconds LATER — after a bare
+ *  rmSync would have run — recreating the tree. It's a one-time flush (never re-touched afterward), so once we
+ *  outlast it a single remove sticks. We retry ~15s (early-exit the moment removal holds). Any straggler is
+ *  caught by sweepSandboxes() at end-of-suite. (We deliberately do NOT poll `pty list` to "wait for settle" —
+ *  that spawns the very daemon that rewrites the metadata.) */
 export async function teardownSandbox(box: Sandbox): Promise<void> {
   try {
     await runConvoy(box, ["down", box.net, "--force"]);
-    await pollUntil(async () => (await ptySessionNames(box.env)).size === 0, 15_000, 1000);
   } catch {
     // best-effort — we still remove the dir
   }
-  rmSync(box.sb, { recursive: true, force: true });
-  if (existsSync(box.sb)) {
-    // A late daemon flush recreated part of the tree between the poll and the remove — sweep once more.
-    await new Promise((r) => setTimeout(r, 1500));
+  for (let i = 0; i < 16; i++) {
     rmSync(box.sb, { recursive: true, force: true });
+    if (!existsSync(box.sb)) return;
+    await new Promise((r) => setTimeout(r, 1000));
   }
+}
+
+/** Backstop: remove any sandbox dir a per-check teardown couldn't (a pty flush that outlasted its retry loop).
+ *  Run once at end-of-suite, when every daemon has long since flushed + exited, so a single remove sticks. */
+export async function sweepSandboxes(): Promise<void> {
+  for (const p of _sandboxPaths) {
+    try {
+      rmSync(p, { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
+  }
+  _sandboxPaths.clear();
 }
 
 /** CHECK 1 — a throwaway network stands up, spawns an agent, and tears down cleanly. Proves init / spawn /
@@ -171,6 +188,7 @@ export async function runReadinessSuite(): Promise<number> {
     out(`      ${r.pass ? r.detail : r.detail}`);
     if (!r.pass && r.fix) out(`      → fix: ${r.fix}`);
   }
+  await sweepSandboxes(); // backstop: remove any sandbox a delayed pty flush kept a per-check teardown from clearing
   const failed = results.filter((r) => !r.pass).length;
   out();
   if (failed === 0) {
