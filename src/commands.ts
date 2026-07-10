@@ -3,7 +3,7 @@
 
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { run } from "./exec.ts";
 import { defaultBinDir, installClis } from "./install-cli.ts";
@@ -97,6 +97,15 @@ function expandTilde(p: string): string {
 async function whichCmd(cmd: string): Promise<string | null> {
   const r = await run("/usr/bin/env", ["sh", "-c", `command -v ${cmd}`]);
   return r.ok ? r.stdout.trim() : null;
+}
+/** Does `cmd` resolve on the process's RAW `$PATH` — i.e. what the USER's shell actually sees? (whichCmd above
+ *  uses convoy's enrichedPath, a superset incl ~/.local/bin + the login shell, so it can find tools the user's
+ *  shell can't — e.g. right after `install-cli` when the bin dir isn't on PATH yet. This catches that gap.) */
+function onRawPath(cmd: string): boolean {
+  for (const dir of (process.env["PATH"] ?? "").split(delimiter).filter(Boolean)) {
+    if (existsSync(join(dir, cmd))) return true;
+  }
+  return false;
 }
 
 // pty caps PTY_ROOT at 90 bytes — the Unix-domain socket path (PTY_ROOT + sock name) must fit the
@@ -218,6 +227,16 @@ export async function cmdDoctor(args: string[]): Promise<number> {
   if (!st) failures++;
   bullet(pty !== null, pty ? `pty on PATH (${pty})` : "pty NOT on PATH — run `convoy install-cli`; sessions can't be managed without it");
   if (!pty) failures++;
+  // Raw-PATH: what the USER's shell actually resolves. The checks above use convoy's enriched superset (incl
+  // ~/.local/bin + the login shell), so they can find tools the user's shell can't — the classic fresh-box gap
+  // where `install-cli` linked the tools but the bin dir isn't on PATH yet. Flag it so --quick doesn't green-
+  // light a setup where a plain `convoy`/`st` in the user's shell would fail. WARN (convoy still resolves them).
+  const rawMissing = ["convoy", "st", "pty"].filter((t) => !onRawPath(t));
+  if (rawMissing.length > 0) {
+    bullet(null, `${rawMissing.join(", ")} linked but NOT on your shell's PATH yet — a plain \`${rawMissing[0]}\` won't run in your shell. Run \`convoy install-cli\` and add its bin dir to PATH (it prints the exact line for your shell), then restart your shell.`);
+  } else {
+    bullet(true, "convoy, st, pty all resolve on your shell's own PATH");
+  }
 
   out("Bus");
   const bus = new Bus(network);
