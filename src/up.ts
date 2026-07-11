@@ -49,11 +49,19 @@ export function busIdOf(s: SupervisedSession): string | null {
 }
 
 /** Did a gone WORKER (non-permanent) session CRASH (→ ding) vs exit cleanly (→ silent)? ONLY a clean exit (status
- *  "exited" with code 0) stays SILENT; everything else — nonzero exit, NULL exit (child SIGKILLed with no record,
- *  e.g. an OOM kill), or a hard `vanished` death — DINGS. (Missing an OOM-killed worker was a false NEGATIVE,
- *  worse than the accepted deliberate-kill false-positive.) Pure → unit-testable. */
+ *  "exited" with code 0) stays SILENT; everything else — nonzero exit, a NULL exit (daemon wrote no exit code), or
+ *  a hard `vanished` death (daemon died without an exit record) — DINGS. Pure → unit-testable.
+ *
+ *  OOM COVERAGE — the honest scope (empirically characterized w/ evals, 2026-07-11): pty's exit record has NO
+ *  signal field, so a signal-death is only visible if it left NO exit record. Two OOM shapes:
+ *    • OOM takes the whole session/daemon → `vanished` (no exit record) → DINGS ✓  (this is what real-agent proofs trip)
+ *    • OOM takes ONLY the agent child, daemon survives + reaps it → recorded `exited`/exitCode 0 — byte-identical to a
+ *      clean finish → SILENT. A DOCUMENTED BLIND SPOT, unreachable via exit record; catching it needs an OS-level
+ *      signal (OOM-killer log / RSS watch) — a follow-up, not this gate.
+ *  So the `!== 0` also-dings-on-null leg is defense-in-depth for a genuine no-record death; it is NOT the child-OOM
+ *  catch (that death surfaces as exit 0, never null — proven on this pty). The `vanished` leg is the real OOM catch. */
 export function workerCrashed(status: SupervisedSession["status"], exitCode: number | null): boolean {
-  return status === "vanished" || (status === "exited" && exitCode !== 0); // exitCode !== 0 covers nonzero AND null (OOM SIGKILL)
+  return status === "vanished" || (status === "exited" && exitCode !== 0); // !== 0 dings nonzero AND a no-record null; child-SIGKILL reaped-as-0 is a documented blind spot
 }
 
 /** The ORCHESTRATORS to ding when a session crash-loops or gives up: convoy can't read a role off a pty session,

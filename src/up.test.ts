@@ -51,8 +51,10 @@ describe("workerCrashed — the worker negative-control gate (crash → ding, cl
   it("a hard 'vanished' death (no exit record) is a crash", () => {
     expect(workerCrashed("vanished", null)).toBe(true);
   });
-  it("a NULL exit (child SIGKILLed, no exit code recorded — e.g. an OOM kill) is a crash — the (b) fix", () => {
-    expect(workerCrashed("exited", null)).toBe(true); // previously silent → missed OOM crashes
+  it("a NULL exit (daemon wrote no exit code — a no-record death) is a crash — defense-in-depth", () => {
+    // NB: a child-SIGKILL/OOM that the daemon REAPS records exited/0 (indistinguishable from clean — a documented
+    // blind spot, see workerCrashed); the real OOM catch is `vanished`. This null leg guards a genuine no-record exit.
+    expect(workerCrashed("exited", null)).toBe(true);
   });
   it("no exit code + still running is not a crash", () => {
     expect(workerCrashed("running", null)).toBe(false);
