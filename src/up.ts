@@ -49,11 +49,23 @@ export function busIdOf(s: SupervisedSession): string | null {
 }
 
 /** Did a gone WORKER (non-permanent) session CRASH (→ ding) vs exit cleanly (→ silent)? ONLY a clean exit (status
- *  "exited" with code 0) stays SILENT; everything else — nonzero exit, NULL exit (child SIGKILLed with no record,
- *  e.g. an OOM kill), or a hard `vanished` death — DINGS. (Missing an OOM-killed worker was a false NEGATIVE,
- *  worse than the accepted deliberate-kill false-positive.) Pure → unit-testable. */
+ *  "exited" with code 0) stays SILENT; everything else — nonzero exit, a NULL exit (daemon wrote no exit code), or
+ *  a hard `vanished` death (daemon died without an exit record) — DINGS. Pure → unit-testable.
+ *
+ *  OOM COVERAGE — resolved w/ pty-claude + evals (2026-07-11). An OOM/SIGKILL surfaces in one of three ways:
+ *    • The whole session/daemon dies → `vanished` (no exit record) → DINGS ✓.
+ *    • CASE A — the AGENT PROCESS ITSELF is OOM/SIGKILL-killed. Convoy execs the harness (`sh -c "exec claude …"`), so
+ *      the harness IS node-pty's direct child; pty ≥ #72 records its signal-death as exitCode = 128+signal (137 for
+ *      SIGKILL) → the existing `exitCode !== 0` gate DINGS it, NO convoy change. (pty < #72 dropped the signal and
+ *      recorded exit 0 → silently missed — so the OOM catch REQUIRES pty ≥ #72.) This is the real agent-crash OOM case.
+ *    • CASE B — a reaped GRANDCHILD: a harness spawns a sub-worker, the sub-worker is OOM-killed, the harness reaps it
+ *      and itself exits 0. pty legitimately records exit 0 (byte-identical to a clean finish) → SILENT. A fundamental
+ *      blind spot at the exit-record layer (not fixable in pty); needs OS-level detection (dmesg / cgroup memory.events).
+ *      NOT how convoy agents run (they exec the harness = Case A), so it's a rare OS-level follow-up, not an agent gap.
+ *  The `!== 0` also-dings-on-null leg is defense-in-depth for a genuine no-record death. `vanished` + (pty ≥ #72) nonzero
+ *  together cover an agent OOM; only the reaped-grandchild (Case B) remains, upstream of the exit record. See PR #41. */
 export function workerCrashed(status: SupervisedSession["status"], exitCode: number | null): boolean {
-  return status === "vanished" || (status === "exited" && exitCode !== 0); // exitCode !== 0 covers nonzero AND null (OOM SIGKILL)
+  return status === "vanished" || (status === "exited" && exitCode !== 0); // !== 0 dings nonzero (incl. an agent OOM = 137 via pty ≥ #72) AND a no-record null; only a reaped-grandchild OOM (Case B) escapes — OS-level follow-up
 }
 
 /** The ORCHESTRATORS to ding when a session crash-loops or gives up: convoy can't read a role off a pty session,

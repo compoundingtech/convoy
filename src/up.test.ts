@@ -51,8 +51,11 @@ describe("workerCrashed — the worker negative-control gate (crash → ding, cl
   it("a hard 'vanished' death (no exit record) is a crash", () => {
     expect(workerCrashed("vanished", null)).toBe(true);
   });
-  it("a NULL exit (child SIGKILLed, no exit code recorded — e.g. an OOM kill) is a crash — the (b) fix", () => {
-    expect(workerCrashed("exited", null)).toBe(true); // previously silent → missed OOM crashes
+  it("a NULL exit (daemon wrote no exit code — a no-record death) is a crash — defense-in-depth", () => {
+    // NB: an OOM of the AGENT process itself records 137 via pty ≥ #72 (convoy execs the harness → direct child) and
+    // is caught by the nonzero leg above — see the Case A/B note on workerCrashed. This null leg guards a genuine
+    // no-record exit; the only uncaught OOM is a reaped-grandchild (Case B), which is an OS-level follow-up.
+    expect(workerCrashed("exited", null)).toBe(true);
   });
   it("no exit code + still running is not a crash", () => {
     expect(workerCrashed("running", null)).toBe(false);
