@@ -52,16 +52,19 @@ export function busIdOf(s: SupervisedSession): string | null {
  *  "exited" with code 0) stays SILENT; everything else — nonzero exit, a NULL exit (daemon wrote no exit code), or
  *  a hard `vanished` death (daemon died without an exit record) — DINGS. Pure → unit-testable.
  *
- *  OOM COVERAGE — the honest scope (empirically characterized w/ evals, 2026-07-11): pty's exit record has NO
- *  signal field, so a signal-death is only visible if it left NO exit record. Two OOM shapes:
- *    • OOM takes the whole session/daemon → `vanished` (no exit record) → DINGS ✓  (this is what real-agent proofs trip)
- *    • OOM takes ONLY the agent child, daemon survives + reaps it → recorded `exited`/exitCode 0 — byte-identical to a
- *      clean finish → SILENT. A DOCUMENTED BLIND SPOT, unreachable via exit record; catching it needs an OS-level
- *      signal (OOM-killer log / RSS watch) — a follow-up, not this gate.
- *  So the `!== 0` also-dings-on-null leg is defense-in-depth for a genuine no-record death; it is NOT the child-OOM
- *  catch (that death surfaces as exit 0, never null — proven on this pty). The `vanished` leg is the real OOM catch. */
+ *  OOM COVERAGE — the honest scope (empirically characterized w/ evals, 2026-07-11). Two OOM shapes:
+ *    • OOM takes the whole session/daemon → `vanished` (no exit record) → DINGS ✓  (this is what real-agent proofs trip;
+ *      it's the real OOM catch TODAY).
+ *    • OOM takes ONLY the agent child, daemon survives + reaps it → CURRENTLY recorded `exited`/exitCode 0 — byte-identical
+ *      to a clean finish → SILENT. A blind spot TODAY. BUT possibly recoverable at the pty layer: pty-claude found pty's
+ *      server.ts onExit DROPS node-pty's signal field, and node-pty DOES surface the kill signal — so a pty fix could
+ *      record a signal-death as 128+signal (e.g. 137), which THIS gate's existing `!== 0` leg would then catch with NO
+ *      convoy change. If pty can't recover the signal, catching a child-only OOM needs OS-level detection (OOM-killer
+ *      log / RSS watch) — a follow-up. (Pending pty signal investigation; see PR #41.)
+ *  So the `!== 0` also-dings-on-null leg is defense-in-depth for a genuine no-record death; today it does NOT catch a
+ *  child-OOM (reaped as exit 0). The `vanished` leg is the real OOM catch today. */
 export function workerCrashed(status: SupervisedSession["status"], exitCode: number | null): boolean {
-  return status === "vanished" || (status === "exited" && exitCode !== 0); // !== 0 dings nonzero AND a no-record null; child-SIGKILL reaped-as-0 is a documented blind spot
+  return status === "vanished" || (status === "exited" && exitCode !== 0); // !== 0 dings nonzero AND a no-record null; child-SIGKILL reaped-as-0 is today's blind spot (pending a pty signal fix)
 }
 
 /** The ORCHESTRATORS to ding when a session crash-loops or gives up: convoy can't read a role off a pty session,
