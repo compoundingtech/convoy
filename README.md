@@ -7,6 +7,27 @@ Where the pieces sit:
 - **pty** — the session manager (runs each agent in a terminal).
 - **convoy** — ties them together: launches agents, wires their transport, installs their persona, keeps the network in sync across machines.
 
+```
+┌ convoy — the orchestrator ───────────────────┐
+│ spawn · reconcile · respawn                  │
+│                                              │
+│ ┌ smalltalk — the bus ─────────────────────┐ │
+│ │ a folder per agent · messages are files  │ │
+│ │                                          │ │
+│ │ cos/inbox/         ──  [ pty: claude ]   │ │
+│ │ supervisor/inbox/  ──  [ pty: codex  ]   │ │
+│ │ worker/inbox/      ──  [ pty: claude ]   │ │
+│ │                                          │ │
+│ │ send  = drop a file in a peer's inbox/   │ │
+│ │ ding  = poke that agent's pty to read it │ │
+│ └──────────────────────────────────────────┘ │
+│                                              │
+│ stop convoy → the agents keep running        │
+└──────────────────────────────────────────────┘
+
+ convoy ≈ Nomad   ·   smalltalk ≈ Consul   ·   pty ≈ pty
+```
+
 The metaphor: your agents travel together like a convoy, and each can carry **sidecars** — a *ding* sidecar (delivers messages to an agent running with no MCP) and a *sync* sidecar (rsyncs the bus to peer machines on write). smalltalk carries the talk; pty runs the terminals; convoy is the whole thing rolling down the road, sidecars and all.
 
 The philosophy behind all of it is in the [manifesto](MANIFESTO.md).
