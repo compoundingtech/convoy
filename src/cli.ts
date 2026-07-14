@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { down, up, type DownOptions, type UpOptions } from "./up.ts";
-import { cmdAdd, cmdApp, cmdCos, cmdDoctor, cmdInit, cmdInstallCli, cmdLs, cmdPersonas, cmdPretrust, cmdReload, cmdRemove, hasFlag, optValue, positionals, unknownFlag } from "./commands.ts";
+import { cmdAdd, cmdApp, cmdCos, cmdDoctor, cmdEnv, cmdInit, cmdInstallCli, cmdLs, cmdPersonas, cmdPretrust, cmdReload, cmdRemove, cmdShell, hasFlag, optValue, positionals, unknownFlag } from "./commands.ts";
 import { run } from "./exec.ts";
 
 /** Reject the first flag `convoy <name>` doesn't honor (rc=2) instead of silently ignoring it. */
@@ -68,6 +68,8 @@ export async function main(argv: string[]): Promise<void> {
     case "cos": code = await cmdCos(rest); break;
     case "up": code = await cmdUp(rest); break;
     case "down": code = await cmdDown(rest); break;
+    case "env": code = cmdEnv(rest); break;
+    case "shell": code = await cmdShell(rest); break;
     case "personas": code = await cmdPersonas(rest); break;
     case "app": code = await cmdApp(rest); break; // hidden from --help until the macOS app is dailyable (see cmdApp)
     case "-h":
@@ -128,6 +130,8 @@ function printHelp(): void {
       "  cos --repo <d> bootstrap a Chief of Staff\n" +
       "  up <network>   host a network in the foreground (TCC anchor + supervisor + flapping-cap)\n" +
       "  down [network] tear down the network — the ONLY path that kills sessions [--dry-run --force --json]\n" +
+      "  env [network]  print eval-safe exports for a network's env — `eval \"$(convoy env <net>)\"` sets ST_ROOT+PTY_ROOT [--identity <id>]\n" +
+      "  shell [network] open an interactive subshell with a network's env exported (pty ls / st just work); exit to leave [--identity <id>]\n" +
       "  remove <id>    remove an agent\n" +
       "  reload <id>    re-materialize an agent from its pty.toml, healing the ding to carry --root (kill + respawn) [--dry-run --write-only]\n" +
       "  pretrust <dir>... batch pre-trust agent dirs before spawning many back-to-back (avoids the trust race) [--config-dir]\n" +

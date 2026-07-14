@@ -1,5 +1,8 @@
 import { afterEach, describe, it, expect } from "vitest";
-import { checkPtyRoot, optValue, pathTooLongMessage, positionals, PTY_ROOT_MAX_BYTES, resolveNetworkRoot, unknownFlag } from "./commands.ts";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { checkPtyRoot, networkEnvExports, optValue, pathTooLongMessage, positionals, PTY_ROOT_MAX_BYTES, resolveNetworkEnv, resolveNetworkRoot, shellQuote, unknownFlag } from "./commands.ts";
 
 describe("arg parsing: --flag=value form (silent-default trap)", () => {
   it("optValue reads both `--name value` and `--name=value`", () => {
@@ -90,5 +93,53 @@ describe("PTY_ROOT path-length validation (FIX 1)", () => {
     expect(pathTooLongMessage(131)).toBe(
       "PTY_ROOT path is 131 bytes, must be 90 or fewer — pick a shorter network location.",
     );
+  });
+});
+
+describe("convoy env / shell — network env exports (footgun-proof targeting)", () => {
+  it("shellQuote is POSIX-eval-safe, incl. spaces + embedded single quotes", () => {
+    expect(shellQuote("/a/b")).toBe("'/a/b'");
+    expect(shellQuote("/a b/c")).toBe("'/a b/c'"); // spaces safe inside the quotes
+    expect(shellQuote("it's")).toBe("'it'\\''s'"); // embedded single quote escaped
+  });
+
+  it("networkEnvExports emits ST_ROOT + PTY_ROOT and UNSETS ST_AGENT for a human shell", () => {
+    expect(networkEnvExports("/net/convoy", "/net/convoy/pty", null)).toEqual([
+      "export ST_ROOT='/net/convoy'",
+      "export PTY_ROOT='/net/convoy/pty'",
+      "unset ST_AGENT",
+    ]);
+  });
+
+  it("networkEnvExports SETS ST_AGENT when acting-as an identity", () => {
+    expect(networkEnvExports("/net/convoy", "/net/convoy/pty", "convoy-claude")[2]).toBe("export ST_AGENT='convoy-claude'");
+  });
+
+  it("resolveNetworkEnv derives {root, ptyRoot=<root>/pty} from a REAL network dir (never hardcoded)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "convoy-env-"));
+    try {
+      const r = resolveNetworkEnv([dir]);
+      expect("root" in r).toBe(true);
+      if ("root" in r) {
+        expect(r.root).toBe(dir);
+        expect(r.ptyRoot).toBe(join(dir, "pty")); // <ST_ROOT>/pty per the isolation model
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolveNetworkEnv fails LOUD (not silently-wrong) on a nonexistent dir", () => {
+    expect("error" in resolveNetworkEnv(["/no/such/network/xyz"])).toBe(true);
+  });
+
+  it("resolveNetworkEnv errors when no network arg AND ST_ROOT is unset (the footgun case)", () => {
+    const saved = process.env["ST_ROOT"];
+    delete process.env["ST_ROOT"];
+    try {
+      expect("error" in resolveNetworkEnv([])).toBe(true);
+    } finally {
+      if (saved !== undefined) process.env["ST_ROOT"] = saved;
+    }
   });
 });
