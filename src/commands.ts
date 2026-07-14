@@ -1,6 +1,7 @@
 // convoy CLI command handlers, ported from Sources/convoy/Commands/*.swift + Runner.swift. Each
 // returns an exit code. Small arg helpers keep the hand-rolled parsing consistent (like pty's cli.ts).
 
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
@@ -123,6 +124,83 @@ export function checkPtyRoot(networkRoot: string | null): { ptyRoot: string; byt
 }
 export function pathTooLongMessage(bytes: number): string {
   return `PTY_ROOT path is ${bytes} bytes, must be ${PTY_ROOT_MAX_BYTES} or fewer — pick a shorter network location.`;
+}
+
+/** POSIX-safe single-quote of an arbitrary string for `eval` (wraps in '…', escaping any embedded '). */
+export function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+/** The eval-safe shell exports that target a network's env: ST_ROOT (the network dir) + PTY_ROOT
+ *  (`<ST_ROOT>/pty`, the per-network pty root), and ST_AGENT — SET to `identity` if acting-as an agent,
+ *  else explicitly UNSET (a human shell is not an agent; clears any stale ST_AGENT). Pure. */
+export function networkEnvExports(root: string, ptyRoot: string, identity: string | null): string[] {
+  return [
+    `export ST_ROOT=${shellQuote(root)}`,
+    `export PTY_ROOT=${shellQuote(ptyRoot)}`,
+    identity ? `export ST_AGENT=${shellQuote(identity)}` : "unset ST_AGENT",
+  ];
+}
+
+/** Resolve the `[network]` positional (or `--network`, else ambient ST_ROOT) to an absolute
+ *  `{ root, ptyRoot }` derived from the real network layout (never hardcoded) — or an `{ error }`.
+ *  Shared by `convoy env` (print exports) and `convoy shell` (spawn a subshell with them). */
+export function resolveNetworkEnv(args: string[]): { root: string; ptyRoot: string } | { error: string } {
+  const net = resolveNetworkRoot(positionals(args)[0] ?? optValue(args, "--network"));
+  if (!net) return { error: "no network resolved — pass one: convoy env|shell <network-dir> (or export ST_ROOT)." };
+  const root = resolve(expandTilde(net));
+  if (!isDir(root)) return { error: `network dir not found: ${root}` };
+  return { root, ptyRoot: checkPtyRoot(net).ptyRoot };
+}
+
+/** `convoy env [network] [--identity <id>]` — print eval-safe exports for a network's env, so
+ *  `eval "$(convoy env <net>)"` targets that network's ST_ROOT + PTY_ROOT with zero manual exports
+ *  (the footgun: forgetting them → pty/st hit the global root, not the network). Env is DERIVED from
+ *  the network layout, never hardcoded. Default network = ambient ST_ROOT (the existing convention). */
+export function cmdEnv(args: string[]): number {
+  const bad = unknownFlag(args, [], ["--identity", "--network"]);
+  if (bad) {
+    err(`unknown flag ${bad}. Usage: convoy env [network] [--identity <id>]`);
+    return 2;
+  }
+  const r = resolveNetworkEnv(args);
+  if ("error" in r) {
+    err(r.error);
+    return 1;
+  }
+  for (const line of networkEnvExports(r.root, r.ptyRoot, optValue(args, "--identity"))) out(line);
+  return 0;
+}
+
+/** `convoy shell [network] [--identity <id>]` — drop into an interactive subshell ($SHELL) with the
+ *  network's env exported, so `pty ls` / `st` just work inside it. Exiting returns to the original shell
+ *  unchanged. Env DERIVED from the network layout. A human shell is not an agent → ST_AGENT unset unless
+ *  --identity is given. Sets CONVOY_NETWORK as a marker (users can surface it in their prompt). */
+export async function cmdShell(args: string[]): Promise<number> {
+  const bad = unknownFlag(args, [], ["--identity", "--network"]);
+  if (bad) {
+    err(`unknown flag ${bad}. Usage: convoy shell [network] [--identity <id>]`);
+    return 2;
+  }
+  const r = resolveNetworkEnv(args);
+  if ("error" in r) {
+    err(r.error);
+    return 1;
+  }
+  const identity = optValue(args, "--identity");
+  const shell = process.env["SHELL"] || "/bin/sh";
+  const env: NodeJS.ProcessEnv = { ...process.env, ST_ROOT: r.root, PTY_ROOT: r.ptyRoot, CONVOY_NETWORK: r.root };
+  if (identity) env["ST_AGENT"] = identity;
+  else delete env["ST_AGENT"];
+  process.stderr.write(`convoy shell → network ${r.root} (ST_ROOT + PTY_ROOT set${identity ? `, ST_AGENT=${identity}` : ", ST_AGENT unset"}). Type 'exit' to leave.\n`);
+  return await new Promise<number>((done) => {
+    const child = spawn(shell, [], { stdio: "inherit", env });
+    child.on("exit", (code) => done(code ?? 0));
+    child.on("error", (e) => {
+      err(`failed to spawn shell ${shell}: ${e.message}`);
+      done(1);
+    });
+  });
 }
 
 // ---- the shared launch flow (Runner.launch) ----
