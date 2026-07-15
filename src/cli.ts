@@ -123,7 +123,7 @@ function printHelp(): void {
   process.stdout.write(
     "convoy — stand up and run your crew of agents (TypeScript).\n\n" +
       "SUBCOMMANDS:\n" +
-      "  ls (default)   list the convoy's members [--tree = spawn-parentage tree + remote section --live-only --json --network]\n" +
+      "  ls (default)   list the convoy's members [--tree = spawn-parentage tree + cross-machine liveness (synced status-mtime + host) --stale-after <ms> --live-only --json --network]\n" +
       "  doctor         setup-readiness suite: prove your setup can do real agent work [--quick = preflight only; --full = real CoS→sup→worker org proof (slower)]\n" +
       "  init [dir]     create + wire a network (auto-clones personas)\n" +
       "  add <role>     add an agent (correct-by-construction) [--identity --harness claude|codex --transport ding|mcp --mcp --network --dir --persona --permanent --prefix --config-dir --dry-run --force]\n" +

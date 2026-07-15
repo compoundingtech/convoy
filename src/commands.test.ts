@@ -2,7 +2,7 @@ import { afterEach, describe, it, expect } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentForest, checkPtyRoot, existingPtyTomlIdentity, formatActivityAge, networkEnvExports, optValue, pathTooLongMessage, positionals, PTY_ROOT_MAX_BYTES, renderForest, resolveNetworkEnv, resolveNetworkRoot, shellQuote, unknownFlag, type LocalInfo } from "./commands.ts";
+import { agentForest, checkPtyRoot, existingPtyTomlIdentity, formatActivityAge, networkEnvExports, optValue, pathTooLongMessage, positionals, PTY_ROOT_MAX_BYTES, readAgentPresence, renderForest, resolveNetworkEnv, resolveNetworkRoot, shellQuote, shortHost, unknownFlag, type LocalInfo } from "./commands.ts";
 import { defaultConvoyNetwork } from "./paths.ts";
 import type { Agent } from "./bus.ts";
 
@@ -269,5 +269,41 @@ describe("convoy ls --tree — spawn-parentage forest + remote section", () => {
     expect(formatActivityAge(2 * 3_600_000)).toBe("2h ago");
     expect(formatActivityAge(5 * 24 * 3_600_000)).toBe("5d ago");
     expect(formatActivityAge(-1)).toBe("just now");
+  });
+});
+
+describe("cross-machine liveness (item 2) — readAgentPresence + shortHost", () => {
+  it("readAgentPresence: reads status MTIME + host from <root>/<id>/{status,host}", () => {
+    const root = mkdtempSync(join(tmpdir(), "convoy-pres-"));
+    try {
+      mkdirSync(join(root, "hetz-codex"), { recursive: true });
+      writeFileSync(join(root, "hetz-codex", "status"), "available\n");
+      writeFileSync(join(root, "hetz-codex", "host"), "hetz.example.com\n");
+      const p = readAgentPresence(root, "hetz-codex");
+      expect(typeof p.statusMtime).toBe("number");
+      expect(p.statusMtime).toBeGreaterThan(0);
+      expect(p.host).toBe("hetz.example.com"); // trimmed
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("readAgentPresence: null statusMtime / null host when the files are absent (pre-rollout, graceful)", () => {
+    const root = mkdtempSync(join(tmpdir(), "convoy-pres2-"));
+    try {
+      mkdirSync(join(root, "bare"), { recursive: true }); // dir exists, no status/host files
+      expect(readAgentPresence(root, "bare")).toEqual({ statusMtime: null, host: null });
+      expect(readAgentPresence(root, "nope")).toEqual({ statusMtime: null, host: null }); // no dir at all
+      expect(readAgentPresence(null, "x")).toEqual({ statusMtime: null, host: null }); // no root
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("shortHost: first dot-label, lowercased (for display + same-host comparison)", () => {
+    expect(shortHost("hetz.example.com")).toBe("hetz");
+    expect(shortHost("silber")).toBe("silber");
+    expect(shortHost("HETZ.local")).toBe("hetz");
+    expect(shortHost("  hetz  ")).toBe("hetz");
   });
 });
