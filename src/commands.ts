@@ -9,8 +9,9 @@ import { fileURLToPath } from "node:url";
 import { run } from "./exec.ts";
 import { defaultConvoyNetwork } from "./paths.ts";
 import { defaultBinDir, installClis } from "./install-cli.ts";
-import { Bus, isLive } from "./bus.ts";
+import { Bus, isLive, type Agent } from "./bus.ts";
 import { PtyHost, spawnFromPtyFile, type SupervisedSession } from "./host.ts";
+import { busIdOf } from "./up.ts";
 import { discoverSmalltalkDir, nativeLaunch, regenerateDingRoot } from "./launch.ts";
 import { authReadiness } from "./doctor/auth.ts";
 import { harnessCheckups } from "./doctor/checkup.ts";
@@ -637,7 +638,95 @@ export async function cmdCos(args: string[]): Promise<number> {
   return rc;
 }
 
+// ---- `convoy ls --tree`: spawn-parentage tree (cos → supervisor → worker) + a remote section ----
+
+/** Per-local-agent info read off its LOCAL pty session (keyed by bus id): its spawner (parent) and tier
+ *  (cos), from the `convoy.spawner` / `convoy.tier` tags convoy stamps at add-time (see up.ts crashDingTargets). */
+export interface LocalInfo {
+  spawner: string | undefined;
+  tier: string | undefined;
+}
+
+export interface AgentTreeNode {
+  agent: Agent;
+  children: AgentTreeNode[];
+}
+
+/** Build the spawn-parentage FOREST over the agents that have a LOCAL pty session (`local`: bus id →
+ *  {spawner, tier}), plus the REMOTE agents (bus members with no local session — they run on another host).
+ *  Roots = local agents whose spawner isn't another local agent (the cos tier sorts first). Pure — no I/O,
+ *  no clock. Phase 1 caveat: parentage is only as complete as the local `convoy.spawner` tags (post-#48
+ *  agents on THIS host); remote agents are listed flat (their metadata doesn't cross machines yet). */
+export function agentForest(agents: readonly Agent[], local: ReadonlyMap<string, LocalInfo>): { roots: AgentTreeNode[]; remote: Agent[] } {
+  const node = new Map<string, AgentTreeNode>();
+  const remote: Agent[] = [];
+  for (const a of agents) {
+    if (local.has(a.identity)) node.set(a.identity, { agent: a, children: [] });
+    else remote.push(a);
+  }
+  const roots: AgentTreeNode[] = [];
+  for (const [id, n] of node) {
+    const spawner = local.get(id)?.spawner;
+    const parent = spawner && spawner !== id ? node.get(spawner) : undefined;
+    if (parent) parent.children.push(n);
+    else roots.push(n); // no spawner, or spawner not a local agent → a root
+  }
+  const byId = (x: AgentTreeNode, y: AgentTreeNode): number => x.agent.identity.localeCompare(y.agent.identity);
+  const sortRec = (ns: AgentTreeNode[]): void => {
+    ns.sort(byId);
+    for (const n of ns) sortRec(n.children);
+  };
+  sortRec(roots);
+  const cosFirst = (id: string): number => (local.get(id)?.tier === "cos" ? 0 : 1);
+  roots.sort((x, y) => cosFirst(x.agent.identity) - cosFirst(y.agent.identity) || byId(x, y));
+  remote.sort((x, y) => x.identity.localeCompare(y.identity));
+  return { roots, remote };
+}
+
+/** Human age of a `lastActivity`, for the REMOTE liveness heuristic: "just now" / "3m ago" / "2h ago" / "5d ago". */
+export function formatActivityAge(ageMs: number): string {
+  const m = Math.floor(Math.max(0, ageMs) / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+/** Box-drawing lines for the forest: each node "identity  status", children under ├─ / └─ / │. Pure. */
+export function renderForest(roots: readonly AgentTreeNode[]): string[] {
+  const lines: string[] = [];
+  const walk = (n: AgentTreeNode, prefix: string, isRoot: boolean, isLast: boolean): void => {
+    const branch = isRoot ? "" : isLast ? "└─ " : "├─ ";
+    lines.push(`${prefix}${branch}${n.agent.identity}  ${n.agent.status}`);
+    const childPrefix = isRoot ? "" : prefix + (isLast ? "   " : "│  ");
+    n.children.forEach((c, i) => walk(c, childPrefix, false, i === n.children.length - 1));
+  };
+  for (const r of roots) walk(r, "", true, true);
+  return lines;
+}
+
+/** Map each LOCAL agent's bus id → its {spawner, tier} from its pty-session tags (best-effort). */
+async function localAgentMap(network: string | null): Promise<Map<string, LocalInfo>> {
+  const m = new Map<string, LocalInfo>();
+  try {
+    for (const s of await new PtyHost(network).sessions()) {
+      if (s.tags["role"] !== "agent") continue; // agent sessions only (not ding/daemon)
+      const bid = busIdOf(s);
+      if (bid) m.set(bid, { spawner: s.tags["convoy.spawner"], tier: s.tags["convoy.tier"] });
+    }
+  } catch {
+    // best-effort: no local pty host → everything shows as remote
+  }
+  return m;
+}
+
 export async function cmdLs(args: string[]): Promise<number> {
+  const bad = unknownFlag(args, ["--live-only", "--json", "--tree"], ["--network"]);
+  if (bad) {
+    err(`unrecognized flag "${bad}" for \`convoy ls\`. See \`convoy --help\`.`);
+    return 2;
+  }
   const network = resolveNetworkRoot(optValue(args, "--network"));
   const liveOnly = hasFlag(args, "--live-only");
   const json = hasFlag(args, "--json");
@@ -647,6 +736,30 @@ export async function cmdLs(args: string[]): Promise<number> {
     out(JSON.stringify(shown));
     return 0;
   }
+
+  if (hasFlag(args, "--tree")) {
+    // Spawn-parentage tree over LOCAL agents + a REMOTE section (liveness heuristic). Uses the FULL member
+    // set (not --live-only) so the tree keeps its structure. See agentForest for the Phase-1 caveats.
+    const { roots, remote } = agentForest(agents, await localAgentMap(network));
+    out(`network ${network}`);
+    out("");
+    out("LOCAL (this host) — spawn parentage:");
+    if (roots.length === 0) out("  (no local agents)");
+    else for (const l of renderForest(roots)) out(`  ${l}`);
+    if (remote.length > 0) {
+      out("");
+      out("REMOTE (no local session on this host — running elsewhere OR offline; liveness inferred from last bus activity = HEURISTIC, not confirmed):");
+      const now = Date.now();
+      for (const a of remote) {
+        const seen = a.lastActivity != null ? `~active ${formatActivityAge(now - a.lastActivity)}` : "no activity seen";
+        out(`  ${a.identity}  ${seen} (heuristic)`);
+      }
+    }
+    out("");
+    out(`${agents.length} member${agents.length === 1 ? "" : "s"}: ${agents.length - remote.length} local, ${remote.length} remote.`);
+    return 0;
+  }
+
   if (shown.length === 0) {
     out(`No members${liveOnly ? " live" : ""} on this network.`);
     return 0;
