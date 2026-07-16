@@ -3,14 +3,15 @@
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { run } from "./exec.ts";
 import { defaultConvoyNetwork } from "./paths.ts";
 import { defaultBinDir, installClis } from "./install-cli.ts";
-import { Bus, isLive } from "./bus.ts";
+import { Bus, isLive, type Agent } from "./bus.ts";
 import { PtyHost, spawnFromPtyFile, type SupervisedSession } from "./host.ts";
+import { busIdOf } from "./up.ts";
 import { discoverSmalltalkDir, nativeLaunch, regenerateDingRoot } from "./launch.ts";
 import { authReadiness } from "./doctor/auth.ts";
 import { harnessCheckups } from "./doctor/checkup.ts";
@@ -637,7 +638,124 @@ export async function cmdCos(args: string[]): Promise<number> {
   return rc;
 }
 
+// ---- `convoy ls --tree`: spawn-parentage tree (cos → supervisor → worker) + a remote section ----
+
+/** Per-local-agent info read off its LOCAL pty session (keyed by bus id): its spawner (parent) and tier
+ *  (cos), from the `convoy.spawner` / `convoy.tier` tags convoy stamps at add-time (see up.ts crashDingTargets). */
+export interface LocalInfo {
+  spawner: string | undefined;
+  tier: string | undefined;
+}
+
+export interface AgentTreeNode {
+  agent: Agent;
+  children: AgentTreeNode[];
+}
+
+/** Build the spawn-parentage FOREST over the agents that have a LOCAL pty session (`local`: bus id →
+ *  {spawner, tier}), plus the REMOTE agents (bus members with no local session — they run on another host).
+ *  Roots = local agents whose spawner isn't another local agent (the cos tier sorts first). Pure — no I/O,
+ *  no clock. Phase 1 caveat: parentage is only as complete as the local `convoy.spawner` tags (post-#48
+ *  agents on THIS host); remote agents are listed flat (their metadata doesn't cross machines yet). */
+export function agentForest(agents: readonly Agent[], local: ReadonlyMap<string, LocalInfo>): { roots: AgentTreeNode[]; remote: Agent[] } {
+  const node = new Map<string, AgentTreeNode>();
+  const remote: Agent[] = [];
+  for (const a of agents) {
+    if (local.has(a.identity)) node.set(a.identity, { agent: a, children: [] });
+    else remote.push(a);
+  }
+  const roots: AgentTreeNode[] = [];
+  for (const [id, n] of node) {
+    const spawner = local.get(id)?.spawner;
+    const parent = spawner && spawner !== id ? node.get(spawner) : undefined;
+    if (parent) parent.children.push(n);
+    else roots.push(n); // no spawner, or spawner not a local agent → a root
+  }
+  const byId = (x: AgentTreeNode, y: AgentTreeNode): number => x.agent.identity.localeCompare(y.agent.identity);
+  const sortRec = (ns: AgentTreeNode[]): void => {
+    ns.sort(byId);
+    for (const n of ns) sortRec(n.children);
+  };
+  sortRec(roots);
+  const cosFirst = (id: string): number => (local.get(id)?.tier === "cos" ? 0 : 1);
+  roots.sort((x, y) => cosFirst(x.agent.identity) - cosFirst(y.agent.identity) || byId(x, y));
+  remote.sort((x, y) => x.identity.localeCompare(y.identity));
+  return { roots, remote };
+}
+
+/** Human age of a `lastActivity`, for the REMOTE liveness heuristic: "just now" / "3m ago" / "2h ago" / "5d ago". */
+export function formatActivityAge(ageMs: number): string {
+  const m = Math.floor(Math.max(0, ageMs) / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+/** Box-drawing lines for the forest: each node "identity  status", children under ├─ / └─ / │. Pure. */
+export function renderForest(roots: readonly AgentTreeNode[], label: (a: Agent) => string = (a) => a.status): string[] {
+  const lines: string[] = [];
+  const walk = (n: AgentTreeNode, prefix: string, isRoot: boolean, isLast: boolean): void => {
+    const branch = isRoot ? "" : isLast ? "└─ " : "├─ ";
+    lines.push(`${prefix}${branch}${n.agent.identity}  ${label(n.agent)}`);
+    const childPrefix = isRoot ? "" : prefix + (isLast ? "   " : "│  ");
+    n.children.forEach((c, i) => walk(c, childPrefix, false, i === n.children.length - 1));
+  };
+  for (const r of roots) walk(r, "", true, true);
+  return lines;
+}
+
+/** The cross-machine liveness inputs for an agent, read DIRECTLY from the (synced) bus files — item-2 seam
+ *  (JOINT SEAM 2026-07-16): the status file's MTIME (the heartbeat the ding sidecar refreshes; it FREEZES
+ *  when the agent's harness dies → stale = dead) + the host file (which machine wrote it). Both null if
+ *  absent (pre-rollout of smalltalk's ding change, or no session). A present host file is convoy's signal
+ *  that the NEW ding (30s heartbeat + host write) is running, so mtime-liveness is reliable — see the
+ *  --tree gate. mtime is meaningful cross-machine only because the sync is mtime-preserving. */
+export function readAgentPresence(root: string | null, identity: string): { statusMtime: number | null; host: string | null } {
+  if (!root) return { statusMtime: null, host: null };
+  const base = join(root, identity);
+  let statusMtime: number | null = null;
+  try {
+    statusMtime = statSync(join(base, "status")).mtimeMs;
+  } catch {
+    // no status file
+  }
+  let host: string | null = null;
+  try {
+    host = readFileSync(join(base, "host"), "utf8").trim() || null;
+  } catch {
+    // no host file
+  }
+  return { statusMtime, host };
+}
+
+/** Short hostname (first dot-label, lowercased) — for display + same-host comparison. */
+export function shortHost(h: string): string {
+  return (h.trim().split(".")[0] ?? h).toLowerCase();
+}
+
+/** Map each LOCAL agent's bus id → its {spawner, tier} from its pty-session tags (best-effort). */
+async function localAgentMap(network: string | null): Promise<Map<string, LocalInfo>> {
+  const m = new Map<string, LocalInfo>();
+  try {
+    for (const s of await new PtyHost(network).sessions()) {
+      if (s.tags["role"] !== "agent") continue; // agent sessions only (not ding/daemon)
+      const bid = busIdOf(s);
+      if (bid) m.set(bid, { spawner: s.tags["convoy.spawner"], tier: s.tags["convoy.tier"] });
+    }
+  } catch {
+    // best-effort: no local pty host → everything shows as remote
+  }
+  return m;
+}
+
 export async function cmdLs(args: string[]): Promise<number> {
+  const bad = unknownFlag(args, ["--live-only", "--json", "--tree"], ["--network", "--stale-after"]);
+  if (bad) {
+    err(`unrecognized flag "${bad}" for \`convoy ls\`. See \`convoy --help\`.`);
+    return 2;
+  }
   const network = resolveNetworkRoot(optValue(args, "--network"));
   const liveOnly = hasFlag(args, "--live-only");
   const json = hasFlag(args, "--json");
@@ -647,6 +765,62 @@ export async function cmdLs(args: string[]): Promise<number> {
     out(JSON.stringify(shown));
     return 0;
   }
+
+  if (hasFlag(args, "--tree")) {
+    // Spawn-parentage tree + real cross-machine liveness (JOINT SEAM item 2). Liveness = the synced status
+    // file's MTIME (fresh < staleAfter = alive; frozen = dead — the ding heartbeat stops when the harness dies).
+    // host file = which machine. Both gate on the host file being PRESENT (= smalltalk's new ding, which also
+    // runs the tight ~30s heartbeat, is live for that agent); absent → fall back to #50's activity heuristic /
+    // bus status, so this ships safe in any rollout order and auto-upgrades per agent. Uses the FULL member set.
+    const staleAfterMs = Number(optValue(args, "--stale-after")) || 120_000;
+    const thisHost = shortHost(hostname());
+    const now = Date.now();
+    const localPty = await localAgentMap(network);
+    const pres = new Map(agents.map((a) => [a.identity, readAgentPresence(network, a.identity)]));
+    const isLocal = (id: string): boolean => {
+      const h = pres.get(id)?.host;
+      return h != null ? shortHost(h) === thisHost : localPty.has(id); // host when known, else #50 pty-presence
+    };
+    const localMap = new Map<string, LocalInfo>();
+    for (const a of agents) if (isLocal(a.identity)) localMap.set(a.identity, localPty.get(a.identity) ?? { spawner: undefined, tier: undefined });
+    const { roots, remote } = agentForest(agents, localMap);
+
+    // Real mtime-liveness only when the host file is present (= new ding + tight heartbeat); else the bus status.
+    const liveLabel = (a: Agent): string => {
+      const p = pres.get(a.identity);
+      if (p?.host != null && p.statusMtime != null) {
+        const age = now - p.statusMtime;
+        return age < staleAfterMs ? a.status : `DEAD (status stale ${formatActivityAge(age)})`;
+      }
+      return a.status;
+    };
+
+    out(`network ${network}   (this host: ${thisHost})`);
+    out("");
+    out("LOCAL (this host) — spawn parentage:");
+    if (roots.length === 0) out("  (no local agents)");
+    else for (const l of renderForest(roots, liveLabel)) out(`  ${l}`);
+    if (remote.length > 0) {
+      out("");
+      out("REMOTE (other hosts / offline):");
+      for (const a of remote) {
+        const p = pres.get(a.identity);
+        const host = p?.host ? shortHost(p.host) : "?";
+        let live: string;
+        if (p?.host != null && p.statusMtime != null) {
+          const age = now - p.statusMtime;
+          live = age < staleAfterMs ? `alive on ${host} (${a.status})` : `DEAD on ${host} (status stale ${formatActivityAge(age)})`;
+        } else {
+          live = a.lastActivity != null ? `~active ${formatActivityAge(now - a.lastActivity)} (heuristic — no synced status yet)` : "no activity seen (heuristic)";
+        }
+        out(`  ${a.identity}  ${live}`);
+      }
+    }
+    out("");
+    out(`${agents.length} member${agents.length === 1 ? "" : "s"}: ${localMap.size} local, ${remote.length} remote. Liveness = synced status mtime (fresh < ${Math.round(staleAfterMs / 1000)}s); agents without a synced host/status file fall back to the activity heuristic.`);
+    return 0;
+  }
+
   if (shown.length === 0) {
     out(`No members${liveOnly ? " live" : ""} on this network.`);
     return 0;

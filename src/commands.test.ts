@@ -2,8 +2,9 @@ import { afterEach, describe, it, expect } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkPtyRoot, existingPtyTomlIdentity, networkEnvExports, optValue, pathTooLongMessage, positionals, PTY_ROOT_MAX_BYTES, resolveNetworkEnv, resolveNetworkRoot, shellQuote, unknownFlag } from "./commands.ts";
+import { agentForest, checkPtyRoot, existingPtyTomlIdentity, formatActivityAge, networkEnvExports, optValue, pathTooLongMessage, positionals, PTY_ROOT_MAX_BYTES, readAgentPresence, renderForest, resolveNetworkEnv, resolveNetworkRoot, shellQuote, shortHost, unknownFlag, type LocalInfo } from "./commands.ts";
 import { defaultConvoyNetwork } from "./paths.ts";
+import type { Agent } from "./bus.ts";
 
 describe("arg parsing: --flag=value form (silent-default trap)", () => {
   it("optValue reads both `--name value` and `--name=value`", () => {
@@ -219,5 +220,90 @@ describe("existingPtyTomlIdentity — the convoy-add clobber guard (silent data-
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("convoy ls --tree — spawn-parentage forest + remote section", () => {
+  const A = (identity: string, status = "available"): Agent => ({ identity, status: status as never, name: null, lastActivity: null, inbox: null });
+
+  it("agentForest: nests children under their spawner; cos-tier root first; non-local → remote", () => {
+    const agents = [A("cos-claude"), A("sup-claude"), A("worker-claude"), A("app-apple-claude"), A("hetz-demo")];
+    const local = new Map<string, LocalInfo>([
+      ["cos-claude", { spawner: undefined, tier: "cos" }],
+      ["sup-claude", { spawner: "cos-claude", tier: undefined }],
+      ["worker-claude", { spawner: "sup-claude", tier: undefined }],
+      ["app-apple-claude", { spawner: undefined, tier: undefined }], // no spawner → a root (flat, pre-#48)
+      // hetz-demo has NO local session → remote
+    ]);
+    const { roots, remote } = agentForest(agents, local);
+    expect(remote.map((a) => a.identity)).toEqual(["hetz-demo"]);
+    expect(roots.map((r) => r.agent.identity)).toEqual(["cos-claude", "app-apple-claude"]); // cos-tier sorts first
+    const cos = roots.find((r) => r.agent.identity === "cos-claude")!;
+    expect(cos.children.map((c) => c.agent.identity)).toEqual(["sup-claude"]);
+    expect(cos.children[0]!.children.map((c) => c.agent.identity)).toEqual(["worker-claude"]);
+  });
+
+  it("agentForest: a spawner that isn't a local agent → the child is a ROOT (Phase 1 has no cross-machine parent), never dropped", () => {
+    const agents = [A("wk-claude")];
+    const local = new Map<string, LocalInfo>([["wk-claude", { spawner: "hetz-sup", tier: undefined }]]);
+    expect(agentForest(agents, local).roots.map((r) => r.agent.identity)).toEqual(["wk-claude"]);
+  });
+
+  it("renderForest: box-drawing tree (├─ / └─)", () => {
+    const agents = [A("cos-claude"), A("a-claude"), A("b-claude")];
+    const local = new Map<string, LocalInfo>([
+      ["cos-claude", { spawner: undefined, tier: "cos" }],
+      ["a-claude", { spawner: "cos-claude", tier: undefined }],
+      ["b-claude", { spawner: "cos-claude", tier: undefined }],
+    ]);
+    expect(renderForest(agentForest(agents, local).roots)).toEqual([
+      "cos-claude  available",
+      "├─ a-claude  available",
+      "└─ b-claude  available",
+    ]);
+  });
+
+  it("formatActivityAge: just now / m / h / d (the remote liveness heuristic)", () => {
+    expect(formatActivityAge(30_000)).toBe("just now");
+    expect(formatActivityAge(3 * 60_000)).toBe("3m ago");
+    expect(formatActivityAge(2 * 3_600_000)).toBe("2h ago");
+    expect(formatActivityAge(5 * 24 * 3_600_000)).toBe("5d ago");
+    expect(formatActivityAge(-1)).toBe("just now");
+  });
+});
+
+describe("cross-machine liveness (item 2) — readAgentPresence + shortHost", () => {
+  it("readAgentPresence: reads status MTIME + host from <root>/<id>/{status,host}", () => {
+    const root = mkdtempSync(join(tmpdir(), "convoy-pres-"));
+    try {
+      mkdirSync(join(root, "hetz-codex"), { recursive: true });
+      writeFileSync(join(root, "hetz-codex", "status"), "available\n");
+      writeFileSync(join(root, "hetz-codex", "host"), "hetz.example.com\n");
+      const p = readAgentPresence(root, "hetz-codex");
+      expect(typeof p.statusMtime).toBe("number");
+      expect(p.statusMtime).toBeGreaterThan(0);
+      expect(p.host).toBe("hetz.example.com"); // trimmed
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("readAgentPresence: null statusMtime / null host when the files are absent (pre-rollout, graceful)", () => {
+    const root = mkdtempSync(join(tmpdir(), "convoy-pres2-"));
+    try {
+      mkdirSync(join(root, "bare"), { recursive: true }); // dir exists, no status/host files
+      expect(readAgentPresence(root, "bare")).toEqual({ statusMtime: null, host: null });
+      expect(readAgentPresence(root, "nope")).toEqual({ statusMtime: null, host: null }); // no dir at all
+      expect(readAgentPresence(null, "x")).toEqual({ statusMtime: null, host: null }); // no root
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("shortHost: first dot-label, lowercased (for display + same-host comparison)", () => {
+    expect(shortHost("hetz.example.com")).toBe("hetz");
+    expect(shortHost("silber")).toBe("silber");
+    expect(shortHost("HETZ.local")).toBe("hetz");
+    expect(shortHost("  hetz  ")).toBe("hetz");
   });
 });
