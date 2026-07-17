@@ -234,6 +234,22 @@ function agentContextDir(box: Sandbox, id: string): string {
   return join(stRootOf(box.net), busId(id), "context");
 }
 
+/** Send a message FROM the doctor harness (a pseudo-agent, NOT a real member) into a sandbox agent's inbox.
+ *  st requires the SENDER to have a known identity + its own bus folder, and `convoy doctor --full` may run
+ *  from a plain HUMAN shell with NO ambient `$ST_AGENT` (a newcomer's exact case) — a bare `st message send`
+ *  then dies with "st: agent required". So we NEVER rely on the runner's env: create the harness sender's bus
+ *  folder + pass `--from` explicitly. Recipient + sender are host-prefixed bus ids. (Latent all along, but the
+ *  host-prefix fix unmasks it by letting execution reach the kick — without this, Johannes's --full fails at
+ *  the seed step even though the CoS booted.) Returns {ok, stderr} matching the runSt shape callers expect. */
+const HARNESS_SENDER = "doctor-harness";
+async function sendFromHarness(box: Sandbox, toId: string, body: string): Promise<{ ok: boolean; stderr: string }> {
+  const from = busId(HARNESS_SENDER);
+  mkdirSync(join(stRootOf(box.net), from, "inbox"), { recursive: true });
+  mkdirSync(join(stRootOf(box.net), from, "archive"), { recursive: true });
+  const r = await runSt(box, ["message", "send", busId(toId), "--from", from, "-m", body]);
+  return { ok: r.ok, stderr: r.stderr };
+}
+
 /** Poll `fn` until it returns true or the timeout elapses. (Normal runtime — Date.now/setTimeout are fine.) */
 async function pollUntil(fn: () => Promise<boolean>, timeoutMs: number, intervalMs = 3000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
@@ -276,7 +292,7 @@ export async function checkDings(): Promise<CheckResult> {
     if (!avail) return { name, pass: false, detail: "recipient never became available (didn't boot)", fix: "the agent didn't boot — check claude auth (`/login`) then re-run; or `convoy doctor --quick`" };
 
     // Send it a message; a working ding must poke the (idle) agent so it drains + archives.
-    const send = await runSt(box, ["message", "send", busId("doctor-rx"), "-m", "doctor ding probe — read and archive this, then stand by"]);
+    const send = await sendFromHarness(box, "doctor-rx", "doctor ding probe — read and archive this, then stand by");
     if (!send.ok) return { name, pass: false, detail: `st message send failed: ${send.stderr.trim()}`, fix: "the bus rejected the message — check `st` on PATH" };
 
     const drained = await pollUntil(async () => {
@@ -405,13 +421,13 @@ export async function checkExactlyOnce(): Promise<CheckResult> {
 
     const token = `XO-${process.pid}-${box.sb.slice(-6)}`;
     // 1st delivery: the agent should append the token once + archive.
-    const send1 = await runSt(box, ["message", "send", busId("doctor-xo"), "-m", token]);
+    const send1 = await sendFromHarness(box, "doctor-xo", token);
     if (!send1.ok) return { name, pass: false, detail: `st message send failed: ${send1.stderr.trim()}`, fix: "the bus rejected the message — check `st` on PATH" };
     const processed = await pollUntil(async () => existsSync(logPath) && countOccurrences(readFileSync(logPath, "utf8"), token) >= 1 && (await inboxCount(box, "doctor-xo")) === 0, 150_000);
     if (!processed) return { name, pass: false, detail: "agent never processed the first delivery (token not appended or inbox not drained)", fix: "the agent didn't act on its ding — check `convoy doctor` checks 2/4" };
 
     // Restart leg: re-deliver the SAME message un-archived, cold-restart, and demand it NOT re-act.
-    const send2 = await runSt(box, ["message", "send", busId("doctor-xo"), "-m", token]);
+    const send2 = await sendFromHarness(box, "doctor-xo", token);
     if (!send2.ok) return { name, pass: false, detail: `re-delivery send failed: ${send2.stderr.trim()}`, fix: "check `st` on PATH" };
     const reload = await runConvoy(box, ["reload", "doctor-xo", "--network", box.net]);
     if (!reload.ok) return { name, pass: false, detail: `cold-restart (convoy reload) failed: ${reload.stderr.trim() || reload.stdout.trim()}`, fix: "check `convoy reload`" };
@@ -522,7 +538,7 @@ export async function checkDevTask(): Promise<CheckResult> {
       "FIX: make the merge non-mutating so the shared defaults are never modified; keep the existing test suite green.",
       "Then COMMIT the fix in the repo (git add -A && git commit -m ...) and report 'done' back up the chain.",
     ].join(" ");
-    const send = await runSt(box, ["message", "send", busId("doctor-cos"), "-m", kick]);
+    const send = await sendFromHarness(box, "doctor-cos", kick);
     if (!send.ok) return { name, pass: false, detail: `seeding the kick failed: ${send.stderr.trim()}`, fix: "the bus rejected the kick — check `st` on PATH" };
 
     // Poll until the worker has COMMITTED a fix that behaves. Gate on the COMMIT, not the working-tree file:
@@ -690,7 +706,7 @@ export async function checkFullOrg(): Promise<CheckResult> {
       "",
       "Do it now, autonomously.",
     ].join("\n");
-    const send = await runSt(box, ["message", "send", busId("doctor-cos"), "-m", kick]);
+    const send = await sendFromHarness(box, "doctor-cos", kick);
     if (!send.ok) return { name, pass: false, detail: `seeding the kick failed: ${send.stderr.trim()}`, fix: "the bus rejected the kick — check `st` on PATH" };
     note("kick sent — waiting for the org to delegate + fix (up to ~13min)…");
 
