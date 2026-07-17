@@ -2,12 +2,13 @@
 // returns an exit code. Small arg helpers keep the hand-rolled parsing consistent (like pty's cli.ts).
 
 import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { run } from "./exec.ts";
-import { CONVOY_DIR, defaultConvoyNetwork, isNetworkName, networkDirForName, networkLayout, stRootOf } from "./paths.ts";
+import { CONVOY_DIR, DEFAULT_NETWORK_NAME, defaultConvoyNetwork, isNetworkName, networkDirForName, networkLayout, stRootOf } from "./paths.ts";
 import { networkNameFromDir, readNetworkConfig, writeNetworkConfig } from "./network-config.ts";
 import { defaultBinDir, installClis } from "./install-cli.ts";
 import { Bus, isLive, type Agent } from "./bus.ts";
@@ -484,30 +485,49 @@ export async function cmdInstallCli(args: string[]): Promise<number> {
   return 0;
 }
 
+/** Prompt on a TTY. The question goes to STDERR so stdout stays clean for a piped/eval'd caller; returns
+ *  the trimmed answer, or `def` when the user just hits enter. */
+async function ask(question: string, def = ""): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    const a = await new Promise<string>((res) => rl.question(`${question}${def ? ` [${def}]` : ""}: `, res));
+    return a.trim() || def;
+  } finally {
+    rl.close();
+  }
+}
+async function askYesNo(question: string, def: boolean): Promise<boolean> {
+  const a = (await ask(`${question} (${def ? "Y/n" : "y/N"})`)).toLowerCase();
+  return a ? a.startsWith("y") : def;
+}
+
+/** `convoy init [name|dir] [--megarepo <path>] [--quiet|--json] [--yes] [--no-channel]` — stand up a
+ *  correctly-structured network. INTERACTIVE + NARRATED by default (Nathan): on a TTY it walks the user
+ *  through network name → megarepo → CoS, and tells them what it's doing at each step. `--quiet`/`--json`
+ *  (or a non-TTY, e.g. scripts/evals) skips prompts + narration; `--yes` accepts defaults non-interactively;
+ *  `--json` also prints a one-line JSON summary. Explicit args always win over prompts. */
 export async function cmdInit(args: string[]): Promise<number> {
-  const badFlag = unknownFlag(args, ["--no-channel"], ["--megarepo"]);
+  const badFlag = unknownFlag(args, ["--no-channel", "--quiet", "--json", "--yes"], ["--megarepo", "--name"]);
   if (badFlag) {
     err(`unrecognized flag "${badFlag}" for \`convoy init\`. See \`convoy init --help\`.`);
     return 2;
   }
-  // --megarepo <path>: the repo agents cut worktrees off (recorded in the network config). Validate it's
-  // a git repo up front so a typo fails at init, not cryptically at the first `convoy add`.
-  let megarepo: string | undefined;
-  const megarepoArg = optValue(args, "--megarepo");
-  if (megarepoArg) {
-    const abs = resolve(expandTilde(megarepoArg));
-    if (!existsSync(join(abs, ".git"))) {
-      err(`--megarepo ${abs} is not a git repo (no .git). Point it at a git checkout, or omit it (agents symlink their own repo).`);
-      return 1;
-    }
-    megarepo = abs;
-  }
-  // No dir + no ST_ROOT → convoy's OWN default network (get-started-with-zero-config); an explicit dir or
-  // ambient ST_ROOT still wins. Idempotent: the default usually already exists (it's where the live network
-  // sits), so mkdir is a no-op and st init re-inits in place without clobbering.
-  const explicit = positionals(args)[0];
-  const dir = resolveNetworkRoot(explicit ?? null);
+  const json = hasFlag(args, "--json");
+  const quiet = json || hasFlag(args, "--quiet");
+  const interactive = Boolean(process.stdin.isTTY) && !quiet && !hasFlag(args, "--yes");
+  const say = (s: string): void => {
+    if (!quiet) out(s);
+  };
+
+  say("Let's set up your convoy network.");
+
+  // 1. Network name / dir — explicit arg or --name wins; else prompt (interactive) or the default.
+  let choice = positionals(args)[0] ?? optValue(args, "--name");
+  if (!choice && interactive) choice = await ask("Network name (or a path)", DEFAULT_NETWORK_NAME);
+  const dir = resolveNetworkRoot(choice ?? null);
   const layout = networkLayout(dir);
+  say(`→ Network "${networkNameFromDir(dir)}" will live at ${dir}`);
+
   // Fail EARLY on a too-long network path — before creating anything — not cryptically at spawn.
   const pr = checkPtyRoot(dir);
   if (!pr.ok) {
@@ -515,34 +535,57 @@ export async function cmdInit(args: string[]): Promise<number> {
     err(`resolved PTY_ROOT would be ${pr.ptyRoot}`);
     return 1;
   }
-  // Create the network STRUCTURE: smalltalk/ (the bus, ST_ROOT, synced across machines) + pty/ (runtime,
-  // machine-local) + worktrees/ (workspaces). Idempotent (mkdir -p). `st init` targets the smalltalk root.
-  const fresh = !existsSync(dir);
+
+  // 2. Megarepo — agents cut worktrees off it. --megarepo wins; else prompt; else preserve a prior config.
+  const priorCfg = readNetworkConfig(dir);
+  let megarepo: string | undefined = priorCfg?.megarepo;
+  const megarepoInput = optValue(args, "--megarepo") ?? (interactive ? await ask("Megarepo path (agents cut worktrees off it) — blank for none", "") : "");
+  if (megarepoInput) {
+    const abs = resolve(expandTilde(megarepoInput));
+    if (!existsSync(join(abs, ".git"))) {
+      err(`${abs} is not a git repo (no .git). Point --megarepo at a git checkout, or omit it (agents symlink their own repo).`);
+      return 1;
+    }
+    megarepo = abs;
+  }
+
+  // 3. Create the structure + config, narrating each step.
+  say("→ Creating the network structure (smalltalk/ = the bus · pty/ = runtime · worktrees/ = workspaces)…");
   mkdirSync(layout.stRoot, { recursive: true });
   mkdirSync(layout.ptyRoot, { recursive: true });
   mkdirSync(layout.worktrees, { recursive: true });
-  if (fresh) out(`created network ${dir} (smalltalk/ + pty/ + worktrees/)`);
-  // Record the network config artifact (<net>/convoy.toml) so add/up/doctor stay consistent and the
-  // user has one reviewable record. Preserve an existing megarepo entry across a re-init.
-  const priorCfg = readNetworkConfig(dir);
-  const effectiveMegarepo = megarepo ?? priorCfg?.megarepo; // new --megarepo wins; else preserve across re-init
-  writeNetworkConfig(dir, { name: networkNameFromDir(dir), ...(effectiveMegarepo ? { megarepo: effectiveMegarepo } : {}) });
-  if (megarepo) out(`  megarepo ${megarepo} (agents cut worktrees off it)`);
+  say("→ Recording the network config (convoy.toml)…");
+  writeNetworkConfig(dir, { name: networkNameFromDir(dir), ...(megarepo ? { megarepo } : {}) });
+  if (megarepo) say(`   megarepo: ${megarepo}`);
+  say("→ Initializing the smalltalk bus…");
   const stArgs = ["init", layout.stRoot];
   if (hasFlag(args, "--no-channel")) stArgs.push("--no-channel");
   const r = await run("st", stArgs);
-  if (r.stdout) process.stdout.write(r.stdout);
   if (!r.ok) {
     err(`st init failed: ${r.stderr.trim()}`);
+    err("→ next: check `st`/`pty` are on PATH and the bus works — run `convoy doctor --quick`.");
     return 1;
   }
+  say("→ Installing personas…");
   try {
-    const res = await ensureInstalled((s) => out(s));
-    if (res.kind === "cloned") out(`installed personas at ${res.path}`);
+    const res = await ensureInstalled((s) => say(`   ${s}`));
+    if (res.kind === "cloned") say(`   installed personas at ${res.path}`);
   } catch (e) {
     err(`personas: ${e instanceof Error ? e.message : String(e)} (add/cos will retry)`);
   }
-  out(`✓ network ready at ${dir}. Add agents with \`convoy add <role> --identity <id>${explicit ? ` --network ${dir}` : ""}\`.`);
+
+  // 4. CoS bootstrap (interactive only — optional).
+  if (interactive && (await askYesNo("Bootstrap a Chief of Staff for this network now?", false))) {
+    const repo = await ask("CoS repo path (its durable memory lives here)", join(dir, "cos"));
+    say("→ Bootstrapping the Chief of Staff…");
+    const cosCode = await cmdCos(["--repo", repo, "--network", dir]);
+    if (cosCode !== 0) err("CoS bootstrap did not complete — you can run `convoy cos --repo <dir>` later.");
+  }
+
+  const addHint = choice ? ` --network ${dir}` : "";
+  say(`✓ Network "${networkNameFromDir(dir)}" is ready at ${dir}.`);
+  say(`  Next: run \`convoy doctor\` to prove it's set up correctly and can do real work — or add an agent with \`convoy add <role> --identity <id>${addHint}\`.`);
+  if (json) out(JSON.stringify({ network: networkNameFromDir(dir), dir, stRoot: layout.stRoot, ptyRoot: layout.ptyRoot, worktrees: layout.worktrees, ...(megarepo ? { megarepo } : {}) }));
   return 0;
 }
 
