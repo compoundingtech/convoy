@@ -38,6 +38,15 @@ describe("doctor structureChecks", () => {
     expect(findCheck(checks, "host-prefixed bus folders")?.detail).toContain("fresh network");
   });
 
+  it("a not-yet-initialized network (dir absent) renders ONE neutral (•) line — never a failure (doctor --quick pre-init, rc=0)", () => {
+    const dir = net(); // a path under a fresh tmp dir, but NEVER scaffolded → does not exist on disk
+    const checks = structureChecks(dir);
+    expect(checks).toHaveLength(1);
+    expect(checks[0]!.ok).toBe(null); // neutral: bullet renders • and the caller contributes ZERO failures
+    expect(checks[0]!.detail).toContain("convoy init");
+    expect(checks.some((c) => c.ok === false)).toBe(false); // nothing gates → `doctor --quick` stays rc=0
+  });
+
   it("missing config → named-network check fails with a fix", () => {
     const dir = net();
     const l = networkLayout(dir);
