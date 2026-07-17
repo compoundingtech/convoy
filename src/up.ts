@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, watch, type FSWatcher } from "node
 import { dirname, join } from "node:path";
 import { run } from "./exec.ts";
 import { pretrustDirs, pretrustDirsCodex } from "./trust.ts";
-import { defaultConvoyNetwork, stRootOf } from "./paths.ts";
+import { defaultConvoyNetwork, isNetworkName, networkDirForName, stRootOf } from "./paths.ts";
 import {
   classify,
   effectiveLimit,
@@ -122,23 +122,36 @@ async function sendDing(root: string, to: string, subject: string, body: string)
   }
 }
 
-/** up/down's network fallback: ambient ST_ROOT, else convoy's OWN default network (not st/pty's global
- *  ~/.local/state/smalltalk root — the ST_ROOT-unset footgun). An explicit `up <network>` still wins. */
+/** up/down's network fallback: prefer CONVOY_NETWORK (set by `convoy env`/`shell`), else legacy ambient
+ *  ST_ROOT, else convoy's OWN default network (not st/pty's global ~/.local/state/smalltalk root — the
+ *  ST_ROOT-unset footgun). Used only when no explicit `up/down <network>` arg is given. */
 function defaultRoot(): string {
-  // The network DIR (not the bus root): prefer CONVOY_NETWORK (set by `convoy env`/`shell`), else legacy
-  // ambient ST_ROOT, else convoy's default network. An explicit `up <network>` still wins.
   return process.env["CONVOY_NETWORK"] ?? process.env["ST_ROOT"] ?? defaultConvoyNetwork();
+}
+
+/** Resolve up/down's `<network>` arg to a network DIR — a bare NAME (`default`, `my-net`) resolves under
+ *  convoy's home (`<home>/<name>`), a PATH is used as-is; no arg falls back via `defaultRoot()`. Mirrors
+ *  `resolveNetworkRoot` (commands.ts) but keeps the CONVOY_NETWORK fallback and lives here to avoid a
+ *  commands.ts↔up.ts import cycle. It ALWAYS returns a concrete dir, so the caller can pin `PtyHost`'s
+ *  PTY_ROOT to the target network's pty registry unconditionally — the fix for `up`/`down` launching into
+ *  the wrong (ambient) pty registry when invoked by name or with no arg (see `up`). */
+export function resolveRoot(network: string | undefined): string {
+  if (network) return isNetworkName(network) ? networkDirForName(network) : network;
+  return defaultRoot();
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 export async function up(opts: UpOptions): Promise<number> {
-  const root = opts.network ?? defaultRoot();
+  const root = resolveRoot(opts.network);
   const interval = opts.reconcileInterval ?? 30;
   const cliWindow = opts.fastFailWindow ?? null;
   const cliLimit = opts.fastFailLimit ?? null;
   const json = opts.json === true;
-  const host = new PtyHost(opts.network ?? null);
+  // Pin PtyHost to the RESOLVED root (not raw opts.network) so PTY_ROOT always points at THIS network's pty
+  // registry — for a bare NAME or a no-arg default alike. A null root left PTY_ROOT unpinned, so host.sessions()
+  // read the ambient PTY_ROOT (a stale/foreign registry) and reconcile launched 0 against the wrong session set.
+  const host = new PtyHost(root);
   const lock = new HostLock(root);
 
   // Single-owner guard (shared with the menubar app via HostLock).
@@ -404,8 +417,8 @@ export interface DownOptions {
  *  nukes unrelated pty sessions. Refuses while a `convoy up`/app host holds the lock — it would respawn
  *  what we kill (reconcile respawns gone permanent sessions) — unless `--force`. */
 export async function down(opts: DownOptions): Promise<number> {
-  const root = opts.network ?? defaultRoot();
-  const host = new PtyHost(opts.network ?? null);
+  const root = resolveRoot(opts.network);
+  const host = new PtyHost(root); // pin PTY_ROOT to the resolved network — same by-name/no-arg fix as `up`
   const lock = new HostLock(root);
   const json = opts.json === true;
   const out = (s = ""): void => {
