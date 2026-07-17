@@ -3,6 +3,12 @@
 // overlay git-excluded + a pristine root; pty.toml carries no --resume). Pure reads + a best-effort
 // `git status` per workspace — never mutates. Safe on a FRESH network: the per-agent checks are vacuously
 // green when there are no agents yet. Each check names what it proves + a concrete fix on failure.
+//
+// PRE-INIT is NOT a failure. Structure-correctness only applies once a network exists — so when the target
+// network is uninitialized (no convoy.toml AND no bus dir — a ready-but-uninitialized machine), this returns
+// a single NEUTRAL line (ok: null) instead of red ✗'s, contributing zero failures. That keeps `convoy doctor
+// --quick` (the machine-readiness preflight, and a newcomer's literal first command) rc=0 before `convoy
+// init` has run.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -15,7 +21,8 @@ export interface StructureCheck {
   name: string;
   /** What a PASS proves (shown so the user understands what doctor is verifying). */
   proves: string;
-  ok: boolean;
+  /** true = pass (✓), false = fail (✗, gates), null = neutral/not-applicable (•, never gates). */
+  ok: boolean | null;
   detail: string;
   /** The exact next step on failure. */
   fix?: string;
@@ -44,6 +51,23 @@ export function structureChecks(network: string): StructureCheck[] {
   const checks: StructureCheck[] = [];
   const layout = networkLayout(network);
   const cfg = readNetworkConfig(network);
+
+  // Pre-init short-circuit: a truly-fresh machine has neither a convoy.toml (init's marker) NOR a bus dir.
+  // That's NOT a broken setup — there's simply nothing to prove structurally until `convoy init` runs. Render
+  // ONE neutral (•) line and return, contributing zero failures (so `doctor --quick` stays rc=0 pre-init).
+  // NB: we DON'T key on the network dir existing — a side-effect (the pty client pinning PTY_ROOT) can create
+  // `<net>/pty` before init, so the dir alone is a false "exists". And a PARTIAL network (bus dir present but
+  // no convoy.toml) does NOT short-circuit — it falls through to the checks below, where "named network"
+  // flags the real problem with a fix.
+  if (cfg === null && !isDir(layout.stRoot)) {
+    checks.push({
+      name: "network",
+      proves: "structure-correctness applies once a network exists — a fresh machine has none yet",
+      ok: null,
+      detail: "no network here yet — run `convoy init` to create it",
+    });
+    return checks;
+  }
 
   checks.push({
     name: "named network",

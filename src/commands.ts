@@ -386,7 +386,9 @@ export async function cmdDoctor(args: string[]): Promise<number> {
   for (const c of structureChecks(network)) {
     bullet(c.ok, `${c.name}: ${c.detail}`);
     out(`      → ${c.proves}`); // narrate WHAT each check proves (Nathan: chatty)
-    if (!c.ok) {
+    if (c.ok === false) {
+      // c.ok === false is a real failure (gates); c.ok === null is neutral/not-applicable (e.g. a
+      // pre-init machine with no network yet) — render as • and NEVER count it as a blocking issue.
       if (c.fix) out(`      → fix: ${c.fix}`);
       failures++;
     }
