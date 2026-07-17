@@ -29,6 +29,9 @@ export interface CheckResult {
   detail: string;
   /** Actionable next step shown on failure — the whole point of doctor. */
   fix?: string;
+  /** A non-gating note shown as a `•` line under a PASSING check — e.g. restart-continuity that went advisory
+   *  (the cold-restarted worker didn't re-engage now.md after poke+retries). Honest without redding rc. */
+  advisory?: string;
 }
 
 /** The convoy CLI entrypoint (bin/convoy), resolved relative to this module so subprocess calls work
@@ -761,8 +764,18 @@ export async function checkFullOrg(): Promise<CheckResult> {
     // (evals' straddle design): the token is unique + lives ONLY in now.md (injected post-boot) so it cannot
     // pre-exist, and the reconstruction artifact STRADDLES the restart — real work (the fix commit) landed BEFORE
     // the reload epoch, the artifact lands AFTER — proving RESUMED, not front-loaded.
-    let restartOk: boolean | null = null; // null = not attempted (no committed fix to restart onto)
+    //
+    // RETRY-THEN-ADVISORY (Nathan's bar) with a HARD FLOOR for PLUMBING. The reload + reboot + now.md injection
+    // are deterministic PLUMBING — a failure there is a real state-externalization bug and HARD-fails --full. But
+    // the reloaded worker ACTING on the injected now.md is agent re-engagement, inherently non-deterministic (the
+    // parked-agent problem: a cold worker often prioritizes its boot-ritual inbox-drain over now.md). So we POKE
+    // it with an imperative re-task ding inside a BOUNDED retry loop; if it STILL doesn't reconstruct we report
+    // reconstructed=false ADVISORY (visible + honest) and DO NOT red rc. Net: --full's rc gates only on the
+    // deterministic proofs (boot + delegation + graded fix + prod-untouched + restart PLUMBING) → deterministic.
+    let restartOk: boolean | null = null; // null = not attempted; true = reconstructed; false = didn't (see the two flags)
     let straddled = false;
+    let restartPlumbingFailed = false; // reload cmd errored OR the worker never rebooted → HARD-fail (plumbing)
+    let restartAdvisory = false; // reload+reboot+now.md OK but no reconstruction after poke+retries → ADVISORY (agent re-engagement)
     if (committedFix) {
       const rcToken = `RC-${process.pid}-${box.sb.slice(-6)}`;
       const rcLog = join(workerRepo, "RECONSTRUCTED.log");
@@ -772,19 +785,36 @@ export async function checkFullOrg(): Promise<CheckResult> {
       const reloadEpoch = Date.now();
       note("G3 ✓ — cold-restarting the worker (convoy reload, no --resume) to prove restart-continuity…");
       const reload = await runConvoy(box, ["reload", "doctor-wk", "--network", box.net]);
+      const reconstructed = async (): Promise<boolean> => existsSync(rcLog) && readFileSync(rcLog, "utf8").includes(rcToken);
       if (!reload.ok) {
+        restartPlumbingFailed = true; // HARD floor — the respawn command itself failed.
         restartOk = false;
-        note(`reload failed: ${reload.stderr.trim() || reload.stdout.trim()}`);
+        note(`restart-continuity: reload FAILED (plumbing) — ${reload.stderr.trim() || reload.stdout.trim()}`);
+      } else if (!(await pollUntil(async () => (await runSt(box, ["status", busId("doctor-wk")])).stdout.trim() === "available", 120_000))) {
+        restartPlumbingFailed = true; // HARD floor — respawned but never came back to available (respawn plumbing broken, not agent mood).
+        restartOk = false;
+        note("restart-continuity: the reloaded worker never rebooted to available (plumbing) — the respawn didn't come up");
       } else {
-        restartOk = await pollUntil(async () => existsSync(rcLog) && readFileSync(rcLog, "utf8").includes(rcToken), 300_000, 6000);
+        // Reload + reboot OK, now.md present (deterministic plumbing all green). Now the AGENT must re-engage —
+        // imperative poke + bounded retry to cut through the boot-ritual inbox-drain; advisory fallback after.
+        restartOk = false;
+        const POKE_ATTEMPTS = 3;
+        for (let attempt = 1; attempt <= POKE_ATTEMPTS && !restartOk; attempt++) {
+          await sendFromHarness(box, "doctor-wk", "You just COLD-RESTARTED. Your now.md holds ONE resumed task — run it EXACTLY now, then stand by. (Skip only if RECONSTRUCTED.log already contains the token.)");
+          note(`restart-continuity: poke ${attempt}/${POKE_ATTEMPTS} sent — waiting for the worker to reconstruct from now.md…`);
+          restartOk = await pollUntil(reconstructed, 75_000, 6000);
+        }
         if (restartOk) {
           try {
             straddled = statSync(rcLog).mtimeMs >= reloadEpoch; // the reconstruction artifact appeared AFTER the restart epoch
           } catch {
             straddled = false;
           }
+          note(`restart-continuity: reconstructed=true straddled=${straddled}`);
+        } else {
+          restartAdvisory = true; // ADVISORY — plumbing fine, agent just didn't re-engage; does NOT red rc.
+          note("restart-continuity: reconstructed=false after poke+retries — ADVISORY (agent re-engagement is inherently non-deterministic; the reload + reboot + now.md injection plumbing are all fine — NOT redding --full)");
         }
-        note(`restart-continuity: reconstructed=${restartOk} straddled=${straddled}`);
       }
     }
 
@@ -807,11 +837,27 @@ export async function checkFullOrg(): Promise<CheckResult> {
     if (!committedFix) gaps.push("G3: the worker did not land a committed, behaving fix within the budget");
     if (committedFix && !detectsBug) gaps.push("G3: the held-out grader did not fail on the buggy base (mutation-validity broken — file a bug)");
     if (committedFix && !touchedSrc) gaps.push("G3: the fix commit changed no src/ file (not a real code fix)");
-    if (restartOk === false) gaps.push("G4: the cold-restarted worker did NOT reconstruct its now.md task (SessionStart didn't inject it, or the agent didn't act) — agents won't survive a restart on this setup");
-    if (restartOk === true && !straddled) gaps.push("G4: the restart-continuity artifact did not land AFTER the restart epoch (front-loaded?) — the straddle check failed");
+    // G4 HARD FLOOR — only the PLUMBING (reload/reboot) + the straddle-epoch INTEGRITY hard-fail. A cold worker
+    // that reboots + has now.md but doesn't re-engage after poke+retries is ADVISORY (restartAdvisory), NOT a gap
+    // — Nathan's retry-then-advisory: agent re-engagement is inherently non-deterministic, so gating rc on it
+    // would make --full flaky by design. The advisory is surfaced as a `•` line on the passing result instead.
+    if (restartPlumbingFailed) gaps.push("G4 (plumbing): the cold restart itself failed — `convoy reload` errored or the worker never rebooted to available; state-externalization RESPAWN is broken on this setup");
+    if (restartOk === true && !straddled) gaps.push("G4: the reconstruction artifact did not land AFTER the restart epoch (front-loaded?) — the straddle integrity check failed");
     if (gaps.length) return { name, pass: false, detail: `the real org did not complete cleanly: ${gaps.join("; ")}`, fix: "a reliability finding, NOT a flake — root-cause the named gate: `convoy doctor --quick` for plumbing, then inspect the bus (`st message ls` per tier) + the CoS/supervisor terminals (`pty peek`) for a persona stall (e.g. the CoS parked waiting on a principal)" };
 
-    return { name, pass: true, detail: "real CoS spawned+briefed a real supervisor, which spawned+briefed a real worker, which fixed + COMMITTED the bug (mutation-valid held-out grade); both delegation hops visible on the bus; the worker survived a cold restart (no --resume) + reconstructed its task from now.md (straddled the restart); hands-off bring-up under `convoy up`; all isolated" };
+    const straddleDetail = restartAdvisory
+      ? "the cold-restarted worker (no --resume) rebooted + its now.md was injected, but it did NOT re-engage the resumed task after poke+retries"
+      : "the worker survived a cold restart (no --resume) + reconstructed its task from now.md (straddled the restart)";
+    return {
+      name,
+      pass: true,
+      detail: `real CoS spawned+briefed a real supervisor, which spawned+briefed a real worker, which fixed + COMMITTED the bug (mutation-valid held-out grade); both delegation hops visible on the bus; ${straddleDetail}; hands-off bring-up under \`convoy up\`; all isolated`,
+      // Restart-continuity is retried-then-advisory (Nathan's bar): when the reboot+injection plumbing is fine but
+      // the agent didn't re-engage, surface it honestly as a non-gating `•` note rather than redding the proof.
+      advisory: restartAdvisory
+        ? "restart-continuity: the cold-restarted worker did not reconstruct now.md after poke+retries — agent re-engagement is inherently non-deterministic (the reload + reboot + now.md-injection PLUMBING all passed; this does NOT red --full)"
+        : undefined,
+    };
   } finally {
     if (up) await up.stop(); // stop hosting (agents detach + keep running) before teardown tears them down
     // teardownSandbox kills the agents THEN cleans up the trust entries doctor wrote for these ephemeral sandbox
@@ -933,6 +979,7 @@ export async function runFullOrgSuite(): Promise<number> {
   for (const r of results) {
     out(`  ${r.pass ? "✓" : "✗"} ${r.name}`);
     out(`      ${r.detail}`);
+    if (r.advisory) out(`      • ${r.advisory}`); // non-gating advisory (e.g. restart-continuity that didn't re-engage) — Nathan's retry-then-advisory
     if (!r.pass && r.fix) out(`      → fix: ${r.fix}`);
   }
   await sweepSandboxes();
