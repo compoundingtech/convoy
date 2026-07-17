@@ -1,6 +1,7 @@
-import { describe, it, expect } from "vitest";
-import { crashDingTargets, workerCrashed } from "./up.ts";
-import type { SupervisedSession } from "./host.ts";
+import { describe, it, expect, afterEach } from "vitest";
+import { crashDingTargets, resolveRoot, workerCrashed } from "./up.ts";
+import { PtyHost, type SupervisedSession } from "./host.ts";
+import { networkDirForName } from "./paths.ts";
 
 const sess = (name: string, tags: Record<string, string>): SupervisedSession => ({ name, cwd: null, command: "", args: [], status: "running" as never, pid: null, exitedAt: null, exitCode: null, tags });
 // Test resolver: read the bus id from a plain "busId" tag (the real one reads ST_AGENT out of the pty.toml).
@@ -39,6 +40,55 @@ describe("crashDingTargets — cos + the crashed one's spawner (NOT the whole pe
     const cosNoBus = sess("cos2", { "ptyfile.session": "claude", "convoy.tier": "cos" }); // no busId → resolve() null
     const crashed = sess("wk", { "ptyfile.session": "claude", busId: "crashtest", "convoy.spawner": "sup-claude" });
     expect(crashDingTargets(crashed, [cos, cosNoBus, sup, crashed], [], resolve).sort()).toEqual(["cos-claude", "sup-claude"]);
+  });
+});
+
+describe("resolveRoot + PtyHost — pin PTY_ROOT to the target network's own registry (the by-name / no-arg launch-0 bug)", () => {
+  // PtyHost's constructor MUTATES process.env.PTY_ROOT (it pins the network's pty registry) — save/restore the
+  // whole set so one test's pin never leaks into the next.
+  const saved = { PTY_ROOT: process.env["PTY_ROOT"], CONVOY_NETWORK: process.env["CONVOY_NETWORK"], ST_ROOT: process.env["ST_ROOT"], XDG_STATE_HOME: process.env["XDG_STATE_HOME"] };
+  const restore = (k: keyof typeof saved): void => {
+    if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+  };
+  afterEach(() => (Object.keys(saved) as (keyof typeof saved)[]).forEach(restore));
+
+  it("resolveRoot: a NAME resolves under convoy's home, a PATH is used as-is", () => {
+    process.env["XDG_STATE_HOME"] = "/x";
+    expect(resolveRoot("default")).toBe("/x/convoy/default");
+    expect(resolveRoot("staging")).toBe("/x/convoy/staging");
+    expect(resolveRoot("/tmp/explicit")).toBe("/tmp/explicit");
+  });
+
+  it("resolveRoot: no arg falls back to CONVOY_NETWORK (set by `convoy env`/`shell`) over ST_ROOT", () => {
+    process.env["CONVOY_NETWORK"] = "/net/dir";
+    process.env["ST_ROOT"] = "/net/dir/smalltalk";
+    expect(resolveRoot(undefined)).toBe("/net/dir");
+  });
+
+  it("ACCEPTANCE: a bogus ambient PTY_ROOT is OVERRIDDEN — `convoy up default` (by NAME) pins PTY_ROOT to the network's OWN pty dir", () => {
+    // Repro of cos's migration bug: the shell has a stale/foreign PTY_ROOT; running up by name must retarget it.
+    process.env["XDG_STATE_HOME"] = "/x";
+    process.env["PTY_ROOT"] = "/some/bogus/foreign/pty";
+    const root = resolveRoot("default"); // the by-NAME path — was left unresolved + PtyHost got null before the fix
+    new PtyHost(root); // constructing the host is what pins PTY_ROOT (as `up`/`down` do)
+    expect(process.env["PTY_ROOT"]).toBe(`${networkDirForName("default")}/pty`); // network's own registry, NOT the bogus value
+    expect(process.env["PTY_ROOT"]).not.toBe("/some/bogus/foreign/pty");
+  });
+
+  it("ACCEPTANCE: the no-arg default (`convoy up`) also re-pins a bogus ambient PTY_ROOT to CONVOY_NETWORK's pty dir", () => {
+    process.env["CONVOY_NETWORK"] = "/net/dir";
+    process.env["PTY_ROOT"] = "/some/bogus/foreign/pty";
+    new PtyHost(resolveRoot(undefined));
+    expect(process.env["PTY_ROOT"]).toBe("/net/dir/pty");
+  });
+
+  it("REGRESSION GUARD: the OLD shape `new PtyHost(null)` leaves the ambient PTY_ROOT unpinned (the bug the fix closes)", () => {
+    // Before the fix, up/down passed `opts.network ?? null` → null for the default → PtyHost skipped pinning →
+    // host.sessions() read this stale value → reconcile launched 0 against the wrong registry.
+    process.env["PTY_ROOT"] = "/some/bogus/foreign/pty";
+    new PtyHost(null);
+    expect(process.env["PTY_ROOT"]).toBe("/some/bogus/foreign/pty"); // NOT re-pinned — exactly the failure mode
   });
 });
 
