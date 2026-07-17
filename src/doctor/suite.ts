@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { isGone } from "@myobie/pty/client";
 import { childEnv, run } from "../exec.ts";
 import { stRootOf } from "../paths.ts";
+import { shortHostname } from "../agent-spec.ts";
 import { claudeConfigPath, codexConfigPath, pretrustDir, untrustDirs, untrustDirsCodex } from "../trust.ts";
 
 /** A file bundled under src/doctor/fixtures/, resolved from this module (works from an installed pkg). */
@@ -214,6 +215,25 @@ async function runSt(box: Sandbox, args: string[]): Promise<{ ok: boolean; stdou
   return { ok: r.ok, stdout: r.stdout, stderr: r.stderr };
 }
 
+/** The host-prefixed BUS id of a sandbox agent. The redesign names every bus folder + ST_AGENT
+ *  `<host>.<identity>` (so machines sync as a clean union), and each agent sets its status / sends / receives
+ *  under that prefixed id. So EVERY `st status`/`st message`/`st context` op the suite runs must target
+ *  `<host>.<id>`, NOT the bare logical id — a bare `st status doctor-cos` reads a nonexistent folder ("agent
+ *  folder missing for doctor-cos") so the poll never sees `available`, and a message to the bare id never
+ *  reaches the prefixed inbox. (This is exactly why doctor --full's G1 "the real CoS never reached available"
+ *  regressed on the new layout — the CoS booted fine; the suite polled the wrong id.) NB: `convoy add
+ *  --identity <id>` / `convoy reload <id>` / filesystem dir paths stay BARE — convoy host-prefixes internally
+ *  and reload matches on the workspace basename. Idempotent: an already-prefixed id passes through. */
+function busId(id: string): string {
+  return id.includes(".") ? id : `${shortHostname()}.${id}`;
+}
+
+/** The on-disk context dir of a sandbox agent — `<net>/smalltalk/<host>.<id>/context` (ST_ROOT is the
+ *  smalltalk/ subdir; the folder is host-prefixed). Where an agent's now.md externalized work-state lives. */
+function agentContextDir(box: Sandbox, id: string): string {
+  return join(stRootOf(box.net), busId(id), "context");
+}
+
 /** Poll `fn` until it returns true or the timeout elapses. (Normal runtime — Date.now/setTimeout are fine.) */
 async function pollUntil(fn: () => Promise<boolean>, timeoutMs: number, intervalMs = 3000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
@@ -252,15 +272,15 @@ export async function checkDings(): Promise<CheckResult> {
     if (!add.ok) return { name, pass: false, detail: `convoy add failed: ${add.stderr.trim() || add.stdout.trim()}`, fix: "spawn failed — `convoy doctor --quick` (Hooks/Personas)" };
 
     // Wait for the recipient to boot + go available (its SessionStart boot ritual sets status + drains).
-    const avail = await pollUntil(async () => (await runSt(box, ["status", "doctor-rx"])).stdout.trim() === "available", 120_000);
+    const avail = await pollUntil(async () => (await runSt(box, ["status", busId("doctor-rx")])).stdout.trim() === "available", 120_000);
     if (!avail) return { name, pass: false, detail: "recipient never became available (didn't boot)", fix: "the agent didn't boot — check claude auth (`/login`) then re-run; or `convoy doctor --quick`" };
 
     // Send it a message; a working ding must poke the (idle) agent so it drains + archives.
-    const send = await runSt(box, ["message", "send", "doctor-rx", "-m", "doctor ding probe — read and archive this, then stand by"]);
+    const send = await runSt(box, ["message", "send", busId("doctor-rx"), "-m", "doctor ding probe — read and archive this, then stand by"]);
     if (!send.ok) return { name, pass: false, detail: `st message send failed: ${send.stderr.trim()}`, fix: "the bus rejected the message — check `st` on PATH" };
 
     const drained = await pollUntil(async () => {
-      const c = await runSt(box, ["message", "ls", "doctor-rx", "--count"]);
+      const c = await runSt(box, ["message", "ls", busId("doctor-rx"), "--count"]);
       return c.ok && parseCount(c.stdout) === 0;
     }, 120_000);
     if (!drained) {
@@ -313,13 +333,13 @@ export async function checkStateExternalization(): Promise<CheckResult> {
     const add = await runConvoy(box, ["add", "worker", "--identity", "doctor-sx", "--network", box.net, "--dir", sxDir, "--persona", fixture("worker-persona.md")]);
     if (!add.ok) return { name, pass: false, detail: `convoy add failed: ${add.stderr.trim() || add.stdout.trim()}`, fix: "spawn failed — `convoy doctor --quick`" };
 
-    const avail = await pollUntil(async () => (await runSt(box, ["status", "doctor-sx"])).stdout.trim() === "available", 120_000);
+    const avail = await pollUntil(async () => (await runSt(box, ["status", busId("doctor-sx")])).stdout.trim() === "available", 120_000);
     if (!avail) return { name, pass: false, detail: "agent never became available (didn't boot)", fix: "the agent didn't boot — check claude auth (`/login`)" };
 
     // Externalize durable work-state: seed now.md with a resume task the reconstructed agent will act on.
     const token = `SX-${process.pid}-${box.sb.slice(-6)}`;
     const logPath = join(sxDir, "RECONSTRUCTED.log");
-    const nowMd = join(box.net, "doctor-sx", "context", "now.md");
+    const nowMd = join(agentContextDir(box, "doctor-sx"), "now.md");
     mkdirSync(dirname(nowMd), { recursive: true });
     writeFileSync(
       nowMd,
@@ -351,7 +371,7 @@ function countOccurrences(haystack: string, needle: string): number {
 
 /** The recipient's inbox count on the sandbox bus (NaN on error). */
 async function inboxCount(box: Sandbox, id: string): Promise<number> {
-  const c = await runSt(box, ["message", "ls", id, "--count"]);
+  const c = await runSt(box, ["message", "ls", busId(id), "--count"]);
   return c.ok ? parseCount(c.stdout) : Number.NaN;
 }
 
@@ -380,18 +400,18 @@ export async function checkExactlyOnce(): Promise<CheckResult> {
     const add = await runConvoy(box, ["add", "worker", "--identity", "doctor-xo", "--network", box.net, "--dir", xoDir, "--persona", fixture("exactly-once-persona.md")]);
     if (!add.ok) return { name, pass: false, detail: `convoy add failed: ${add.stderr.trim() || add.stdout.trim()}`, fix: "spawn failed — `convoy doctor --quick`" };
 
-    const avail = await pollUntil(async () => (await runSt(box, ["status", "doctor-xo"])).stdout.trim() === "available", 120_000);
+    const avail = await pollUntil(async () => (await runSt(box, ["status", busId("doctor-xo")])).stdout.trim() === "available", 120_000);
     if (!avail) return { name, pass: false, detail: "agent never became available (didn't boot)", fix: "the agent didn't boot — check claude auth (`/login`)" };
 
     const token = `XO-${process.pid}-${box.sb.slice(-6)}`;
     // 1st delivery: the agent should append the token once + archive.
-    const send1 = await runSt(box, ["message", "send", "doctor-xo", "-m", token]);
+    const send1 = await runSt(box, ["message", "send", busId("doctor-xo"), "-m", token]);
     if (!send1.ok) return { name, pass: false, detail: `st message send failed: ${send1.stderr.trim()}`, fix: "the bus rejected the message — check `st` on PATH" };
     const processed = await pollUntil(async () => existsSync(logPath) && countOccurrences(readFileSync(logPath, "utf8"), token) >= 1 && (await inboxCount(box, "doctor-xo")) === 0, 150_000);
     if (!processed) return { name, pass: false, detail: "agent never processed the first delivery (token not appended or inbox not drained)", fix: "the agent didn't act on its ding — check `convoy doctor` checks 2/4" };
 
     // Restart leg: re-deliver the SAME message un-archived, cold-restart, and demand it NOT re-act.
-    const send2 = await runSt(box, ["message", "send", "doctor-xo", "-m", token]);
+    const send2 = await runSt(box, ["message", "send", busId("doctor-xo"), "-m", token]);
     if (!send2.ok) return { name, pass: false, detail: `re-delivery send failed: ${send2.stderr.trim()}`, fix: "check `st` on PATH" };
     const reload = await runConvoy(box, ["reload", "doctor-xo", "--network", box.net]);
     if (!reload.ok) return { name, pass: false, detail: `cold-restart (convoy reload) failed: ${reload.stderr.trim() || reload.stdout.trim()}`, fix: "check `convoy reload`" };
@@ -413,8 +433,9 @@ export async function checkExactlyOnce(): Promise<CheckResult> {
 /** Did `recipient` receive at least one message from `sender` (inbox OR archive) on the sandbox bus? Agents
  *  archive a message once they act on it, so a completed hop lands in the archive — we count both. */
 async function receivedFrom(box: Sandbox, recipient: string, sender: string): Promise<boolean> {
-  const inbox = parseCount((await runSt(box, ["message", "ls", recipient, "--from", sender, "--count"])).stdout);
-  const arch = parseCount((await runSt(box, ["message", "ls", recipient, "--archive", "--from", sender, "--count"])).stdout);
+  const [rx, tx] = [busId(recipient), busId(sender)]; // both sides are host-prefixed bus ids on the new layout
+  const inbox = parseCount((await runSt(box, ["message", "ls", rx, "--from", tx, "--count"])).stdout);
+  const arch = parseCount((await runSt(box, ["message", "ls", rx, "--archive", "--from", tx, "--count"])).stdout);
   return (Number.isFinite(inbox) ? inbox : 0) + (Number.isFinite(arch) ? arch : 0) >= 1;
 }
 
@@ -487,7 +508,7 @@ export async function checkDevTask(): Promise<CheckResult> {
     // Wait for all three tiers to boot + go available.
     const ids = ["doctor-cos", "doctor-sup", "doctor-wk"];
     const allUp = await pollUntil(async () => {
-      for (const id of ids) if ((await runSt(box, ["status", id])).stdout.trim() !== "available") return false;
+      for (const id of ids) if ((await runSt(box, ["status", busId(id)])).stdout.trim() !== "available") return false;
       return true;
     }, 180_000);
     if (!allUp) return { name, pass: false, detail: "not all three tiers booted to available", fix: "a tier didn't boot — check claude auth (`/login`), then re-run; or `convoy doctor --quick`" };
@@ -501,7 +522,7 @@ export async function checkDevTask(): Promise<CheckResult> {
       "FIX: make the merge non-mutating so the shared defaults are never modified; keep the existing test suite green.",
       "Then COMMIT the fix in the repo (git add -A && git commit -m ...) and report 'done' back up the chain.",
     ].join(" ");
-    const send = await runSt(box, ["message", "send", "doctor-cos", "-m", kick]);
+    const send = await runSt(box, ["message", "send", busId("doctor-cos"), "-m", kick]);
     if (!send.ok) return { name, pass: false, detail: `seeding the kick failed: ${send.stderr.trim()}`, fix: "the bus rejected the kick — check `st` on PATH" };
 
     // Poll until the worker has COMMITTED a fix that behaves. Gate on the COMMIT, not the working-tree file:
@@ -651,7 +672,7 @@ export async function checkFullOrg(): Promise<CheckResult> {
     note("real chief-of-staff spawned; convoy up hosting — waiting for hands-off boot (up to 3min)…");
 
     // G1 — hands-off bring-up: the CoS boots to available with NO trust prompt + NO interview stall.
-    const cosUp = await pollUntil(async () => (await runSt(box, ["status", "doctor-cos"])).stdout.trim() === "available", 180_000);
+    const cosUp = await pollUntil(async () => (await runSt(box, ["status", busId("doctor-cos")])).stdout.trim() === "available", 180_000);
     if (!cosUp) return { name, pass: false, detail: "the real CoS never reached available (didn't boot hands-off)", fix: "the CoS stalled on boot — likely the first-run interview didn't skip (check the pre-seeded identity.md `name:`) or a workspace-trust prompt; verify claude auth (`/login`) + `convoy doctor --quick`" };
     note("CoS available (hands-off boot ✓) — seeding the kick");
 
@@ -669,7 +690,7 @@ export async function checkFullOrg(): Promise<CheckResult> {
       "",
       "Do it now, autonomously.",
     ].join("\n");
-    const send = await runSt(box, ["message", "send", "doctor-cos", "-m", kick]);
+    const send = await runSt(box, ["message", "send", busId("doctor-cos"), "-m", kick]);
     if (!send.ok) return { name, pass: false, detail: `seeding the kick failed: ${send.stderr.trim()}`, fix: "the bus rejected the kick — check `st` on PATH" };
     note("kick sent — waiting for the org to delegate + fix (up to ~13min)…");
 
@@ -690,7 +711,7 @@ export async function checkFullOrg(): Promise<CheckResult> {
       committedFix = committed && (await run("node", [grader, workerRepo])).ok;
       if (cosToSup && supToWk && committedFix) break;
       if (i % 5 === 0) {
-        const stat = async (id: string): Promise<string> => (await runSt(box, ["status", id])).stdout.trim() || "—";
+        const stat = async (id: string): Promise<string> => (await runSt(box, ["status", busId(id)])).stdout.trim() || "—";
         note(`… cos→sup=${cosToSup} sup→wk=${supToWk} committed=${committed} graded=${committedFix} | status cos=${await stat("doctor-cos")} sup=${await stat("doctor-sup")} wk=${await stat("doctor-wk")}`);
       }
       await new Promise((r) => setTimeout(r, 6000));
@@ -715,7 +736,7 @@ export async function checkFullOrg(): Promise<CheckResult> {
     if (committedFix) {
       const rcToken = `RC-${process.pid}-${box.sb.slice(-6)}`;
       const rcLog = join(workerRepo, "RECONSTRUCTED.log");
-      const nowMd = join(box.net, "doctor-wk", "context", "now.md");
+      const nowMd = join(agentContextDir(box, "doctor-wk"), "now.md");
       mkdirSync(dirname(nowMd), { recursive: true });
       writeFileSync(nowMd, `# Current task (durable working state)\n\nYou were restarted mid-task. Your ONE resumed task: run this shell command EXACTLY, then stand by:\n\n    echo "${rcToken}" >> "${rcLog}"\n\nDo it now if RECONSTRUCTED.log does not already contain that token.\n`);
       const reloadEpoch = Date.now();
