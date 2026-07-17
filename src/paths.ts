@@ -4,6 +4,13 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+/** The per-workspace overlay directory convoy writes into a composed repo: `<workspace>/.convoy/`
+ *  holds PERSONA.md, DING-BUS.md, and pty.toml — everything moved OUT of the repo root so the product
+ *  repo stays pristine. The whole dir is git-excluded (`.git/info/exclude`). Shared so launch.ts (write),
+ *  host.ts (read the manifest + derive the workspace from the ptyfile tag), and commands.ts (clobber
+ *  guard / reload) all agree on the location. */
+export const CONVOY_DIR = ".convoy";
+
 /** convoy's OWN default network location: `($XDG_STATE_HOME | ~/.local/state)/convoy`.
  *
  *  This is EXACTLY where the live network already sits, so adopting it as the default is

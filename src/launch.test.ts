@@ -65,7 +65,7 @@ describe("writePtyToml (pinned hostname-prefixed ids, cold start)", () => {
     const dir = mkdtempSync(join(tmpdir(), "convoy-ptytoml-"));
     try {
       writePtyToml(dir, spec());
-      const toml = readFileSync(join(dir, "pty.toml"), "utf8");
+      const toml = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
       expect(toml).toContain('id = "silber.convoy"');
       expect(toml).toContain('id = "silber.convoy.ding"');
       expect(toml).toContain('prefix = "silber.convoy"');
@@ -82,7 +82,7 @@ describe("writePtyToml (pinned hostname-prefixed ids, cold start)", () => {
     const dir = mkdtempSync(join(tmpdir(), "convoy-ptytoml-root-"));
     try {
       writePtyToml(dir, spec({ networkRoot: "/net/convoy" }));
-      const toml = readFileSync(join(dir, "pty.toml"), "utf8");
+      const toml = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
       // ding command carries --root so a pty-restart can't drop the root
       expect(toml).toContain("st ding silber.convoy --identity convoy-claude --root /net/convoy");
       // --root is a ding-only concern; the harness (claude) command must not get it
@@ -98,7 +98,7 @@ describe("writePtyToml (pinned hostname-prefixed ids, cold start)", () => {
     const dir = mkdtempSync(join(tmpdir(), "convoy-ptytoml-cfg-"));
     try {
       writePtyToml(dir, spec({ configDir: "/seeded/cfg" }));
-      const toml = readFileSync(join(dir, "pty.toml"), "utf8");
+      const toml = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
       expect(toml).toContain('CLAUDE_CONFIG_DIR = "/seeded/cfg"');
       // exactly once — on the claude session, never duplicated onto the ding session.
       expect(toml.match(/CLAUDE_CONFIG_DIR/g)?.length).toBe(1);
@@ -111,7 +111,7 @@ describe("writePtyToml (pinned hostname-prefixed ids, cold start)", () => {
     const dir = mkdtempSync(join(tmpdir(), "convoy-ptytoml-nocfg-"));
     try {
       writePtyToml(dir, spec());
-      expect(readFileSync(join(dir, "pty.toml"), "utf8")).not.toContain("CLAUDE_CONFIG_DIR");
+      expect(readFileSync(join(dir, ".convoy", "pty.toml"), "utf8")).not.toContain("CLAUDE_CONFIG_DIR");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -121,7 +121,7 @@ describe("writePtyToml (pinned hostname-prefixed ids, cold start)", () => {
     const dir = mkdtempSync(join(tmpdir(), "convoy-ptytoml-cos-"));
     try {
       writePtyToml(dir, spec({ role: "chief-of-staff", identity: "cos-claude" }));
-      const toml = readFileSync(join(dir, "pty.toml"), "utf8");
+      const toml = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
       expect(toml).toContain('id = "silber.cos"');
       expect(toml).toContain("first-run interview");
     } finally {
@@ -133,7 +133,7 @@ describe("writePtyToml (pinned hostname-prefixed ids, cold start)", () => {
     const dir = mkdtempSync(join(tmpdir(), "convoy-ptytoml-codex-"));
     try {
       writePtyToml(dir, spec({ harness: "codex", identity: "vauban-codex", transport: "ding" }));
-      const toml = readFileSync(join(dir, "pty.toml"), "utf8");
+      const toml = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
       expect(toml).toContain("[sessions.codex]");
       expect(toml).toContain("exec codex --dangerously-bypass-approvals-and-sandbox");
       expect(toml).not.toContain("[sessions.claude]");
@@ -150,7 +150,7 @@ describe("writePtyToml (pinned hostname-prefixed ids, cold start)", () => {
     try {
       // a worker spawned by a supervisor: convoy.spawner recorded, no convoy.tier (not cos)
       writePtyToml(dir, spec({ role: "worker", identity: "wk-claude" }), { spawner: "sup-claude" });
-      const wkToml = readFileSync(join(dir, "pty.toml"), "utf8");
+      const wkToml = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
       expect(wkToml).toContain('"convoy.spawner" = "sup-claude"');
       expect(wkToml).not.toContain("convoy.tier");
       // the spawner tag is on the harness session, NOT the ding (else a crash double-dings the same busId)
@@ -158,13 +158,13 @@ describe("writePtyToml (pinned hostname-prefixed ids, cold start)", () => {
 
       // the CoS: convoy.tier=cos stamped (the always-ding backstop)
       writePtyToml(dir, spec({ role: "chief-of-staff", identity: "cos-claude" }));
-      const cosToml = readFileSync(join(dir, "pty.toml"), "utf8");
+      const cosToml = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
       expect(cosToml).toContain('"convoy.tier" = "cos"');
       expect(cosToml).not.toContain("convoy.spawner"); // no spawner passed
 
       // no spawner passed + not cos → neither tag (a human-spawned worker → cos-only ding downstream)
       writePtyToml(dir, spec({ role: "worker", identity: "wk2-claude" }));
-      const plainToml = readFileSync(join(dir, "pty.toml"), "utf8");
+      const plainToml = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
       expect(plainToml).not.toContain("convoy.spawner");
       expect(plainToml).not.toContain("convoy.tier");
     } finally {
@@ -242,12 +242,13 @@ PTY_ROOT = "/net/convoy/pty"
   it("bakes --root into the ding command and leaves the harness (role prompt + --resume) VERBATIM", () => {
     const dir = mkdtempSync(join(tmpdir(), "convoy-regen-"));
     try {
-      writeFileSync(join(dir, "pty.toml"), preToml);
+      mkdirSync(join(dir, ".convoy"), { recursive: true });
+      writeFileSync(join(dir, ".convoy", "pty.toml"), preToml);
       const r = regenerateDingRoot(dir);
       expect(r).not.toBeNull();
       expect(r?.before).toBe("st ding silber.evals --identity evals-claude");
       expect(r?.after).toBe("st ding silber.evals --identity evals-claude --root /net/convoy");
-      const out = readFileSync(join(dir, "pty.toml"), "utf8");
+      const out = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
       expect(out).toContain('command = "st ding silber.evals --identity evals-claude --root /net/convoy"');
       // harness block untouched — --resume + boot prompt survive byte-for-byte
       expect(out).toContain('command = "exec claude --permission-mode bypassPermissions --resume ABC-123-RESUME"');
@@ -259,11 +260,12 @@ PTY_ROOT = "/net/convoy/pty"
   it("is idempotent — a second run on the healed file is a no-op (returns null)", () => {
     const dir = mkdtempSync(join(tmpdir(), "convoy-regen-idem-"));
     try {
-      writeFileSync(join(dir, "pty.toml"), preToml);
+      mkdirSync(join(dir, ".convoy"), { recursive: true });
+      writeFileSync(join(dir, ".convoy", "pty.toml"), preToml);
       expect(regenerateDingRoot(dir)).not.toBeNull(); // first heal
-      const healed = readFileSync(join(dir, "pty.toml"), "utf8");
+      const healed = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
       expect(regenerateDingRoot(dir)).toBeNull(); // already has --root
-      expect(readFileSync(join(dir, "pty.toml"), "utf8")).toBe(healed); // unchanged
+      expect(readFileSync(join(dir, ".convoy", "pty.toml"), "utf8")).toBe(healed); // unchanged
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -272,10 +274,11 @@ PTY_ROOT = "/net/convoy/pty"
   it("dryRun computes the before/after WITHOUT writing the file", () => {
     const dir = mkdtempSync(join(tmpdir(), "convoy-regen-dry-"));
     try {
-      writeFileSync(join(dir, "pty.toml"), preToml);
+      mkdirSync(join(dir, ".convoy"), { recursive: true });
+      writeFileSync(join(dir, ".convoy", "pty.toml"), preToml);
       const r = regenerateDingRoot(dir, { dryRun: true });
       expect(r?.after).toContain("--root /net/convoy");
-      expect(readFileSync(join(dir, "pty.toml"), "utf8")).toBe(preToml); // NOT written
+      expect(readFileSync(join(dir, ".convoy", "pty.toml"), "utf8")).toBe(preToml); // NOT written
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -284,7 +287,8 @@ PTY_ROOT = "/net/convoy/pty"
   it("returns null when there is no ding session to heal", () => {
     const dir = mkdtempSync(join(tmpdir(), "convoy-regen-noding-"));
     try {
-      writeFileSync(join(dir, "pty.toml"), '[sessions.claude]\nid = "x"\ncommand = "exec claude"\n');
+      mkdirSync(join(dir, ".convoy"), { recursive: true });
+      writeFileSync(join(dir, ".convoy", "pty.toml"), '[sessions.claude]\nid = "x"\ncommand = "exec claude"\n');
       expect(regenerateDingRoot(dir)).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -308,7 +312,7 @@ describe("writeContextFiles — clean-worktree wiring (convoy must not dirty a r
     };
   }
 
-  it("wires imports via CLAUDE.local.md, NEVER touches a tracked CLAUDE.md, and excludes all authored files", () => {
+  it("writes the overlay into .convoy/, wires @imports via .claude/rules/convoy.md, leaves the root pristine, and excludes both", () => {
     const dir = mkdtempSync(join(tmpdir(), "convoy-ctx-"));
     try {
       mkdirSync(join(dir, ".git", "info"), { recursive: true }); // pose as a git repo (no git binary needed)
@@ -319,20 +323,22 @@ describe("writeContextFiles — clean-worktree wiring (convoy must not dirty a r
 
       writeContextFiles(dir, makeSpec(dir, personaPath));
 
-      // the tracked CLAUDE.md is untouched — the whole point of the fix
+      // the tracked CLAUDE.md is untouched
       expect(readFileSync(join(dir, "CLAUDE.md"), "utf8")).toBe(trackedClaudeMd);
-      // the imports land in CLAUDE.local.md instead
-      const local = readFileSync(join(dir, "CLAUDE.local.md"), "utf8");
-      expect(local).toContain("@PERSONA.md");
-      expect(local).toContain("@DING-BUS.md");
-      // the context files themselves are written
-      expect(readFileSync(join(dir, "PERSONA.md"), "utf8")).toBe("# worker persona\n");
-      expect(existsSync(join(dir, "DING-BUS.md"))).toBe(true);
-      // and all three are kept out of git via .git/info/exclude
+      // the overlay content lives in .convoy/, NOT the repo root
+      expect(readFileSync(join(dir, ".convoy", "PERSONA.md"), "utf8")).toBe("# worker persona\n");
+      expect(existsSync(join(dir, ".convoy", "DING-BUS.md"))).toBe(true);
+      // the root is pristine — no scattered convoy files (loader is a dot-dir file)
+      expect(existsSync(join(dir, "PERSONA.md"))).toBe(false);
+      expect(existsSync(join(dir, "CLAUDE.local.md"))).toBe(false);
+      // the loader (.claude/rules/convoy.md) @imports the .convoy/ content (relative to the rules file)
+      const loader = readFileSync(join(dir, ".claude", "rules", "convoy.md"), "utf8");
+      expect(loader).toContain("@../../.convoy/PERSONA.md");
+      expect(loader).toContain("@../../.convoy/DING-BUS.md");
+      // both the .convoy/ overlay and the loader are kept out of git
       const exclude = readFileSync(join(dir, ".git", "info", "exclude"), "utf8");
-      expect(exclude).toContain("PERSONA.md");
-      expect(exclude).toContain("DING-BUS.md");
-      expect(exclude).toContain("CLAUDE.local.md");
+      expect(exclude).toContain(".convoy/");
+      expect(exclude).toContain(".claude/rules/convoy.md");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -346,32 +352,29 @@ describe("writeContextFiles — clean-worktree wiring (convoy must not dirty a r
       writeFileSync(personaPath, "# p\n");
       writeContextFiles(dir, makeSpec(dir, personaPath));
       writeContextFiles(dir, makeSpec(dir, personaPath));
-      const local = readFileSync(join(dir, "CLAUDE.local.md"), "utf8");
-      expect(local.match(/@PERSONA\.md/g)?.length).toBe(1);
-      expect(local.match(/@DING-BUS\.md/g)?.length).toBe(1);
+      const loader = readFileSync(join(dir, ".claude", "rules", "convoy.md"), "utf8");
+      expect(loader.match(/@\.\.\/\.\.\/\.convoy\/PERSONA\.md/g)?.length).toBe(1);
+      expect(loader.match(/@\.\.\/\.\.\/\.convoy\/DING-BUS\.md/g)?.length).toBe(1);
       const exclude = readFileSync(join(dir, ".git", "info", "exclude"), "utf8");
-      expect(exclude.match(/^PERSONA\.md$/gm)?.length).toBe(1);
+      expect(exclude.match(/^\.convoy\/$/gm)?.length).toBe(1);
+      expect(exclude.match(/^\.claude\/rules\/convoy\.md$/gm)?.length).toBe(1);
       expect(exclude.match(/agent context \(local/g)?.length).toBe(1); // single marker
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it("does not double-load: an import already in a tracked CLAUDE.md is not re-added to CLAUDE.local.md", () => {
-    const dir = mkdtempSync(join(tmpdir(), "convoy-ctx-migrate-"));
+  it("append-only: preserves a user's existing .claude/rules/convoy.md content", () => {
+    const dir = mkdtempSync(join(tmpdir(), "convoy-ctx-preexisting-"));
     try {
-      mkdirSync(join(dir, ".git", "info"), { recursive: true });
+      mkdirSync(join(dir, ".claude", "rules"), { recursive: true });
+      writeFileSync(join(dir, ".claude", "rules", "convoy.md"), "# my own note\nkeep me\n");
       const personaPath = join(dir, "persona-src.md");
       writeFileSync(personaPath, "# p\n");
-      // a dir the OLD (pre-exclude) convoy already wired — imports live in the tracked CLAUDE.md
-      writeFileSync(join(dir, "CLAUDE.md"), "# proj\n@PERSONA.md\n@DING-BUS.md\n");
       writeContextFiles(dir, makeSpec(dir, personaPath));
-      // no CLAUDE.local.md needed — both imports are already loaded via CLAUDE.md
-      expect(existsSync(join(dir, "CLAUDE.local.md"))).toBe(false);
-      // but the untracked PERSONA/DING files are still swept out of git status
-      const exclude = readFileSync(join(dir, ".git", "info", "exclude"), "utf8");
-      expect(exclude).toContain("PERSONA.md");
-      expect(exclude).toContain("DING-BUS.md");
+      const loader = readFileSync(join(dir, ".claude", "rules", "convoy.md"), "utf8");
+      expect(loader).toContain("keep me"); // user content preserved
+      expect(loader).toContain("@../../.convoy/PERSONA.md"); // convoy imports appended
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -387,7 +390,7 @@ describe("writeContextFiles — clean-worktree wiring (convoy must not dirty a r
       writeContextFiles(dir, makeSpec(dir, personaPath));
       const exclude = readFileSync(join(dir, ".git", "info", "exclude"), "utf8");
       expect(exclude).toContain("*.log"); // pre-existing content preserved
-      expect(exclude).toContain("PERSONA.md"); // convoy entry appended
+      expect(exclude).toContain(".convoy/"); // convoy entry appended
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -399,7 +402,7 @@ describe("writeContextFiles — clean-worktree wiring (convoy must not dirty a r
       const personaPath = join(dir, "persona-src.md");
       writeFileSync(personaPath, "# p\n");
       writeContextFiles(dir, makeSpec(dir, personaPath));
-      expect(existsSync(join(dir, "CLAUDE.local.md"))).toBe(true);
+      expect(existsSync(join(dir, ".claude", "rules", "convoy.md"))).toBe(true);
       expect(existsSync(join(dir, ".git"))).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -428,16 +431,17 @@ describe("convoy add clean-worktree — pty.toml + settings + context, EVERY aut
     try {
       mkdirSync(join(dir, ".git", "info"), { recursive: true }); // pose as a git repo (no git binary needed)
       writePtyToml(dir, spec(dir, join(dir, "p.md"), join(dir, ".net")), { spawner: null });
-      expect(existsSync(join(dir, "pty.toml"))).toBe(true);
-      expect(readFileSync(join(dir, ".git", "info", "exclude"), "utf8")).toContain("pty.toml");
+      expect(existsSync(join(dir, ".convoy", "pty.toml"))).toBe(true);
+      expect(readFileSync(join(dir, ".git", "info", "exclude"), "utf8")).toContain(".convoy/");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  // The acceptance cos asked for: compose an agent into a CLEAN git repo, assert `git status
-  // --porcelain` is EMPTY (every convoy-authored file — pty.toml, .claude/settings.local.json,
-  // PERSONA.md, DING-BUS.md, CLAUDE.local.md — is excluded, and the tracked CLAUDE.md is untouched).
+  // The acceptance cos asked for, updated for the .convoy/ layout: compose an agent into a CLEAN git
+  // repo, assert `git status --porcelain` is EMPTY (the whole .convoy/ overlay — PERSONA.md, DING-BUS.md,
+  // pty.toml — plus root CLAUDE.local.md + .claude/settings.local.json are excluded, tracked CLAUDE.md
+  // untouched, and the product-repo ROOT is pristine — no PERSONA.md/DING-BUS.md/pty.toml at the root).
   it("acceptance: writeAgentFiles leaves a clean repo — git status --porcelain is empty", () => {
     const savedSt = process.env["SMALLTALK_DIR"];
     const repo = mkdtempSync(join(tmpdir(), "convoy-clean-repo-"));
@@ -462,11 +466,17 @@ describe("convoy add clean-worktree — pty.toml + settings + context, EVERY aut
       git("commit", "-qm", "init");
       // compose the agent in
       writeAgentFiles(repo, spec(repo, persona, netRoot));
-      // convoy really did write its files…
-      expect(existsSync(join(repo, "pty.toml"))).toBe(true);
+      // convoy really did write its files — into .convoy/ + the .claude/ dot-dir…
+      expect(existsSync(join(repo, ".convoy", "pty.toml"))).toBe(true);
+      expect(existsSync(join(repo, ".convoy", "PERSONA.md"))).toBe(true);
+      expect(existsSync(join(repo, ".convoy", "DING-BUS.md"))).toBe(true);
+      expect(existsSync(join(repo, ".claude", "rules", "convoy.md"))).toBe(true);
       expect(existsSync(join(repo, ".claude", "settings.local.json"))).toBe(true);
-      expect(existsSync(join(repo, "PERSONA.md"))).toBe(true);
-      expect(existsSync(join(repo, "DING-BUS.md"))).toBe(true);
+      // …the product-repo ROOT is pristine — ZERO visible convoy files at the root…
+      expect(existsSync(join(repo, "pty.toml"))).toBe(false);
+      expect(existsSync(join(repo, "PERSONA.md"))).toBe(false);
+      expect(existsSync(join(repo, "DING-BUS.md"))).toBe(false);
+      expect(existsSync(join(repo, "CLAUDE.local.md"))).toBe(false);
       // …and the tracked CLAUDE.md is untouched
       expect(readFileSync(join(repo, "CLAUDE.md"), "utf8")).toBe("# project rules\n");
       // THE acceptance: the worktree is clean
