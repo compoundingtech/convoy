@@ -7,10 +7,10 @@ import { homedir, hostname } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { run } from "./exec.ts";
-import { defaultConvoyNetwork } from "./paths.ts";
+import { CONVOY_DIR, defaultConvoyNetwork } from "./paths.ts";
 import { defaultBinDir, installClis } from "./install-cli.ts";
 import { Bus, isLive, type Agent } from "./bus.ts";
-import { PtyHost, spawnFromPtyFile, type SupervisedSession } from "./host.ts";
+import { PtyHost, spawnFromPtyFile, workspaceOfPtyfile, type SupervisedSession } from "./host.ts";
 import { busIdOf } from "./up.ts";
 import { discoverSmalltalkDir, nativeLaunch, regenerateDingRoot } from "./launch.ts";
 import { authReadiness } from "./doctor/auth.ts";
@@ -217,7 +217,7 @@ function printDerived(pf: ReturnType<typeof preflight>): void {
  *  one. Lets `convoy add` refuse to SILENTLY clobber a pty.toml that belongs to a DIFFERENT agent. */
 export function existingPtyTomlIdentity(dir: string): string | null {
   try {
-    const m = readFileSync(join(dir, "pty.toml"), "utf8").match(/ST_AGENT\s*=\s*"([^"]+)"/);
+    const m = readFileSync(join(dir, CONVOY_DIR, "pty.toml"), "utf8").match(/ST_AGENT\s*=\s*"([^"]+)"/);
     return m ? m[1] ?? null : null;
   } catch {
     return null; // no pty.toml / unreadable → nothing to clobber
@@ -252,14 +252,14 @@ async function launchSpec(spec: AgentSpec, o: { dryRun: boolean; force?: boolean
   const owner = existingPtyTomlIdentity(targetDir);
   const foreign = owner !== null && owner !== spec.identity;
   if (foreign && !o.force) {
-    const msg = `${join(targetDir, "pty.toml")} already belongs to a DIFFERENT agent "${owner}" — adding ${spec.identity} here would overwrite it (silent data loss). Use \`--dir <new-dir>\` to place ${spec.identity} elsewhere, or \`--force\` to overwrite here.`;
+    const msg = `${join(targetDir, CONVOY_DIR, "pty.toml")} already belongs to a DIFFERENT agent "${owner}" — adding ${spec.identity} here would overwrite it (silent data loss). Use \`--dir <new-dir>\` to place ${spec.identity} elsewhere, or \`--force\` to overwrite here.`;
     if (o.dryRun) err(`(dry run) WOULD REFUSE: ${msg}`);
     else {
       err(msg);
       return 1;
     }
   } else if (foreign && o.force) {
-    out(`  ! --force: overwriting ${owner}'s pty.toml at ${join(targetDir, "pty.toml")}`);
+    out(`  ! --force: overwriting ${owner}'s pty.toml at ${join(targetDir, CONVOY_DIR, "pty.toml")}`);
   }
 
   if (o.dryRun) {
@@ -884,7 +884,7 @@ export async function cmdReload(args: string[]): Promise<number> {
   const norm = (s: string): string => s.replace(/-(claude|codex)$/i, "").replace(/[^a-z0-9]/gi, "").toLowerCase();
   const dirOf = (s: SupervisedSession): string => {
     const pf = s.tags["ptyfile"];
-    return pf ? basename(dirname(pf)) : s.cwd ? basename(s.cwd) : "";
+    return pf ? basename(workspaceOfPtyfile(pf)) : s.cwd ? basename(s.cwd) : "";
   };
   const host = new PtyHost(network);
   const sessions = (await host.sessions()).filter((s) => s.name === identity || norm(dirOf(s)) === norm(identity));
@@ -897,7 +897,7 @@ export async function cmdReload(args: string[]): Promise<number> {
     err(`can't resolve pty.toml for "${identity}" (no ptyfile tag on its sessions).`);
     return 1;
   }
-  const dir = dirname(ptyfile);
+  const dir = workspaceOfPtyfile(ptyfile); // the workspace; regenerateDingRoot + spawnFromPtyFile append .convoy/
   const writeOnly = hasFlag(args, "--write-only");
   // Heal the ding block to carry --root (idempotent) BEFORE re-materializing, so the fresh spawn — and
   // every future cold-up — gets a durable ding, not an env-only one that a pty restart would strip.

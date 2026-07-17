@@ -14,6 +14,7 @@ import {
   type SessionInfo,
 } from "@myobie/pty/client";
 import { commandFingerprint, parseStrategyTags, type StrategyTags } from "./flapping-cap.ts";
+import { CONVOY_DIR } from "./paths.ts";
 import { childEnv, run } from "./exec.ts";
 
 function cleanEnv(overlay: NodeJS.ProcessEnv): Record<string, string> {
@@ -29,8 +30,10 @@ function cleanEnv(overlay: NodeJS.ProcessEnv): Record<string, string> {
  *  the ptyfile pair so `convoy up` recognizes + hosts it. */
 export async function spawnFromPtyFile(dir: string, root: string | null): Promise<{ spawned: string[]; failed: string[] }> {
   if (root) process.env["PTY_ROOT"] = `${root}/pty`;
-  const file = readPtyFile(dir);
-  const tomlPath = join(dir, "pty.toml");
+  // The manifest lives in the workspace's .convoy/ overlay; the SESSIONS still run in the workspace
+  // (cwd: dir below), which decouples the manifest location from the working dir.
+  const file = readPtyFile(join(dir, CONVOY_DIR));
+  const tomlPath = join(dir, CONVOY_DIR, "pty.toml");
   const spawned: string[] = [];
   const failed: string[] = [];
   for (const def of file.sessions) {
@@ -93,13 +96,22 @@ export function commandHashOf(s: SupervisedSession): string {
   return commandFingerprint(s.command, s.args);
 }
 
+/** The workspace dir a ptyfile tag points into: `<workspace>/.convoy/pty.toml` → `<workspace>` (strip
+ *  the overlay segment). Tolerates a bare `<workspace>/pty.toml` too. */
+export function workspaceOfPtyfile(ptyfile: string): string {
+  const d = dirname(ptyfile);
+  return basename(d) === CONVOY_DIR ? dirname(d) : d;
+}
+
 /** A stable, human-readable logical id — `<agent-dir>/<session-key>` (e.g. `convoy/claude`) from the
  *  persistent ptyfile tags; survives respawns + `pty kill`. Falls back to the pty id. */
 export function logicalId(s: SupervisedSession): string {
   const session = s.tags["ptyfile.session"];
   if (!session) return s.name;
   const ptyfile = s.tags["ptyfile"];
-  const dir = ptyfile ? basename(dirname(ptyfile)) : s.cwd ? basename(s.cwd) : "";
+  // ptyfile is `<workspace>/.convoy/pty.toml` — strip the `.convoy` segment so the logical id names the
+  // WORKSPACE, not the overlay dir (basename(dirname()) alone would yield ".convoy" for every agent).
+  const dir = ptyfile ? basename(workspaceOfPtyfile(ptyfile)) : s.cwd ? basename(s.cwd) : "";
   return dir ? `${dir}/${session}` : session;
 }
 

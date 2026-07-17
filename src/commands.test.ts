@@ -196,7 +196,8 @@ describe("existingPtyTomlIdentity — the convoy-add clobber guard (silent data-
   it("reads the ST_AGENT (owning identity) from a dir's pty.toml", () => {
     const dir = mkdtempSync(join(tmpdir(), "convoy-owner-"));
     try {
-      writeFileSync(join(dir, "pty.toml"), '[sessions.claude.env]\nST_AGENT = "other-claude"\n');
+      mkdirSync(join(dir, ".convoy"), { recursive: true });
+      writeFileSync(join(dir, ".convoy", "pty.toml"), '[sessions.claude.env]\nST_AGENT = "other-claude"\n');
       expect(existingPtyTomlIdentity(dir)).toBe("other-claude");
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -215,7 +216,8 @@ describe("existingPtyTomlIdentity — the convoy-add clobber guard (silent data-
   it("is null for a pty.toml with no ST_AGENT (can't attribute → don't block)", () => {
     const dir = mkdtempSync(join(tmpdir(), "convoy-noagent-"));
     try {
-      writeFileSync(join(dir, "pty.toml"), 'prefix = "x"\n');
+      mkdirSync(join(dir, ".convoy"), { recursive: true });
+      writeFileSync(join(dir, ".convoy", "pty.toml"), 'prefix = "x"\n');
       expect(existingPtyTomlIdentity(dir)).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });

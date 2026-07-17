@@ -13,6 +13,7 @@ import { ensureInstalled } from "./personas.ts";
 import { resolvedPersonaPath, sessionId, specPermanent, specPermissionMode, type AgentSpec, type Harness } from "./agent-spec.ts";
 import type { Role } from "./role.ts";
 import { pretrustDir, pretrustDirsCodex } from "./trust.ts";
+import { CONVOY_DIR } from "./paths.ts";
 
 // The pty session key is per-harness: claude → [sessions.claude], codex → [sessions.codex]. (Before,
 // this was hardcoded "claude", so `--harness codex` silently wrote a claude session — a false-harness
@@ -165,8 +166,10 @@ export function writePtyToml(dir: string, spec: AgentSpec, opts?: { spawner?: st
         : {}),
     },
   };
-  writeFileSync(join(dir, "pty.toml"), tomlStringify(doc));
-  excludeFromGit(dir, ["pty.toml"]); // convoy-authored — keep it out of the composed repo's git status
+  const convoyDir = join(dir, CONVOY_DIR);
+  mkdirSync(convoyDir, { recursive: true });
+  writeFileSync(join(convoyDir, "pty.toml"), tomlStringify(doc));
+  excludeFromGit(dir, [`${CONVOY_DIR}/`]); // the whole convoy-authored overlay stays out of git status
 }
 
 /** Heal a PRE-#43 pty.toml so its ding survives a `pty restart` (which preserves the command but drops
@@ -179,7 +182,7 @@ export function writePtyToml(dir: string, spec: AgentSpec, opts?: { spawner?: st
  *  cold-start counterpart: #43 fixed writePtyToml for NEW agents; this heals the existing FILES so a
  *  `convoy reload` / cold `convoy up` re-materializes a durable ding instead of an env-only one. */
 export function regenerateDingRoot(dir: string, opts?: { dryRun?: boolean }): { before: string; after: string } | null {
-  const path = join(dir, "pty.toml");
+  const path = join(dir, CONVOY_DIR, "pty.toml"); // `dir` is the workspace; the manifest lives in .convoy/
   const text = readFileSync(path, "utf8");
   const doc = tomlParse(text) as { sessions?: { ding?: { command?: unknown; env?: Record<string, string>; tags?: Record<string, string> } } };
   const ding = doc.sessions?.ding;
@@ -251,31 +254,30 @@ function excludeFromGit(dir: string, names: string[]): void {
   writeFileSync(excludePath, `${existing}${sep}${block}`);
 }
 
-/** Install the persona (copy the resolved base) + the ding-bus instructions, and wire their
- *  `@`-imports through **CLAUDE.local.md** — which Claude Code auto-loads alongside CLAUDE.md and
- *  treats identically, but is a personal/local file meant to stay out of version control. convoy must
- *  never dirty the repo's tracked CLAUDE.md just by composing into it, so we no longer append there.
- *  The convoy-authored files (PERSONA.md, DING-BUS.md, CLAUDE.local.md) are kept out of `git status`
- *  via .git/info/exclude. An import already present in a tracked CLAUDE.md (a dir wired by the older,
- *  pre-exclude convoy) is skipped, so we never double-load the persona. */
+/** Install the persona + ding-bus instructions into the workspace's `.convoy/` overlay dir (moved OUT
+ *  of the repo root, so the product repo stays pristine), and wire their `@`-imports through a loader
+ *  Claude Code auto-loads. Loader = the workspace-root `CLAUDE.local.md` (Nathan-approved): Claude
+ *  auto-loads it (empirically verified), it's git-excluded so the root stays git-CLEAN, and we
+ *  APPEND-ONLY — never clobber a user's own CLAUDE.local.md, and skip an import already present (in the
+ *  loader or a tracked CLAUDE.md) so the persona is never double-loaded. The whole `.convoy/` dir + the
+ *  loader are kept out of `git status` via .git/info/exclude. */
 export function writeContextFiles(dir: string, spec: AgentSpec): void {
+  const convoyDir = join(dir, CONVOY_DIR);
   const imports: string[] = [];
-  const authored: string[] = []; // convoy-authored files to keep out of git
 
   const persona = resolvedPersonaPath(spec);
   if (persona && existsSync(persona)) {
-    writeFileSync(join(dir, "PERSONA.md"), readFileSync(persona, "utf8"));
-    imports.push("@PERSONA.md");
-    authored.push("PERSONA.md");
+    mkdirSync(convoyDir, { recursive: true });
+    writeFileSync(join(convoyDir, "PERSONA.md"), readFileSync(persona, "utf8"));
+    imports.push(`@${CONVOY_DIR}/PERSONA.md`);
   }
   if (usesDing(spec)) {
-    writeFileSync(join(dir, "DING-BUS.md"), DING_BUS_MD);
-    imports.push("@DING-BUS.md");
-    authored.push("DING-BUS.md");
+    mkdirSync(convoyDir, { recursive: true });
+    writeFileSync(join(convoyDir, "DING-BUS.md"), DING_BUS_MD);
+    imports.push(`@${CONVOY_DIR}/DING-BUS.md`);
   }
 
-  // Wire the imports via CLAUDE.local.md — never the tracked CLAUDE.md. Skip any import already loaded
-  // via a tracked CLAUDE.md (older dirs the pre-exclude convoy appended to) so it isn't double-loaded.
+  // Loader: the root CLAUDE.local.md, @importing the .convoy/ content. Append-only + no-double-load.
   const claudeMd = join(dir, "CLAUDE.md");
   const claudeMdContent = existsSync(claudeMd) ? readFileSync(claudeMd, "utf8") : "";
   const localMd = join(dir, "CLAUDE.local.md");
@@ -285,8 +287,10 @@ export function writeContextFiles(dir: string, spec: AgentSpec): void {
     const sep = localContent && !localContent.endsWith("\n") ? "\n" : "";
     writeFileSync(localMd, `${localContent}${sep}${missing.join("\n")}\n`);
   }
-  if (existsSync(localMd)) authored.push("CLAUDE.local.md");
 
+  // Keep the whole .convoy/ overlay + the loader out of `git status`.
+  const authored: string[] = [`${CONVOY_DIR}/`];
+  if (existsSync(localMd)) authored.push("CLAUDE.local.md");
   excludeFromGit(dir, authored);
 }
 
