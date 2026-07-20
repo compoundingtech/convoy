@@ -99,10 +99,11 @@ export function isDeclarableIdentity(identity: string, ctx: IdentityContext = {}
   return identityErrors(identity, ctx).length === 0;
 }
 
-/** The message explaining why `context/` is refused under a counter-named identity, or null when it is
- *  allowed. Convoy REFUSES rather than warns: the failure it prevents — an agent reading a stranger's
+/** The message explaining why convoy will not SEED `context/` under a counter-named identity, or null when
+ *  it will. Convoy refuses rather than warns: the failure it narrows — an agent reading a stranger's
  *  `context/now.md` as its own memory and acting on it — is silent, and a warning at declare time is not
- *  read at the moment the wrong file is opened weeks later. */
+ *  read at the moment the wrong file is opened weeks later. Note convoy can only decline to CREATE the
+ *  dir; the bus creates it on demand, so this is a default and not an invariant (DELTA-005). */
 export function counterContextRefusal(identity: string): string | null {
   const stem = counterStem(identity);
   if (stem === null) return null;
@@ -110,6 +111,7 @@ export function counterContextRefusal(identity: string): string | null {
     `refusing to create durable context/ under "${identity}": \`${stem}-<n>\` is a COUNTER, and the counter ` +
     `re-derives per parent lifetime — after a restart, "${identity}" names a different agent than it did before, ` +
     `which would silently inherit the previous one's context/now.md as its own memory. ` +
+    `convoy will not CREATE it, but the bus still would on demand — so prefer a stable name over relying on this. ` +
     `Give the agent a meaningful name (what it works on, not what number it is).`
   );
 }

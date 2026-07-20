@@ -139,14 +139,14 @@ export function readCatalog(networkDir: string, opts?: { idContext?: IdentityCon
         warning: `path says identity "${defaults.identity}" but the file declares "${af.identity}" — using "${af.identity}" (identity comes from content; the path only supplies defaults)`,
       });
     }
-    if (defaults.host !== undefined && af.host !== undefined && defaults.host.toLowerCase() !== af.host) {
+    if (defaults.host !== undefined && !isRoleDir(defaults.host) && af.host !== undefined && defaults.host.toLowerCase() !== af.host) {
       warnings.push({
         path,
         warning: `path says host "${defaults.host}" but the file declares "${af.host}" — using "${af.host}"`,
       });
     }
     // The path default only APPLIES when the file is silent.
-    if (af.host === undefined && defaults.host !== undefined && defaults.identity !== undefined) {
+    if (af.host === undefined && defaults.host !== undefined && !isRoleDir(defaults.host) && defaults.identity !== undefined) {
       af.host = defaults.host.toLowerCase();
     }
 

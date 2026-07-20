@@ -103,6 +103,9 @@ supervisor silently orphans an agent from its escalation path.
 a named thing, not the second anonymous worker. `counterContextRefusal` refuses
 rather than warns (SPEC-R16) — decision
 [0006](../.decisions/0006-counter-named-identities-get-no-durable-context.md).
+Declining to create the directory is the whole of what convoy can do here; the
+bus creates it on demand, so this is a default rather than an invariant
+([DELTA-005](../.delta/DELTA-005-counter-context-refusal-is-not-enforcement.md)).
 
 ## Authoring
 

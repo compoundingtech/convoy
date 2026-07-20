@@ -1,4 +1,4 @@
-# 0006 — Counter-named identities get no durable context
+# 0006 — Convoy does not seed durable context for counter-named identities
 
 Status: accepted
 
@@ -33,9 +33,15 @@ memory is involved.
 ## Decision
 
 Convoy refuses to provision `context/` under a counter-named identity. The agent
-still launches and still gets a bus folder; it simply has no durable context to
-misattribute. The refusal is printed with the reason, naming the inheritance
-failure rather than only the rule.
+still launches and still gets a bus folder; convoy simply does not hand it a
+pre-made place to put durable memory. The refusal is printed with the reason,
+naming the inheritance failure rather than only the rule.
+
+**This is a strong default, not an invariant.** The directory is not convoy's to
+withhold — `st context write` creates it unconditionally, so an agent that
+externalizes work state makes its own. Preventing that requires enforcement where
+the directory is created, which is the bus. See
+[DELTA-005](../.delta/DELTA-005-counter-context-refusal-is-not-enforcement.md).
 
 A counter is recognised as a trailing number on a stem that is a role name, a
 role alias, or one of a small set of generic words (`agent`, `child`, `peer`,
@@ -46,8 +52,9 @@ is.
 
 ## Consequences
 
-- The unsafe case is structurally impossible rather than discouraged, which is
-  the correct posture for a silent, delayed, cross-agent failure.
+- The unsafe case is narrowed rather than eliminated. Convoy no longer creates
+  the inheritable artifact, which removes the case where an agent finds one
+  waiting for it; an agent that writes its own is still exposed.
 - Counter-named agents remain usable for exactly the work they are suited to:
   ephemeral, fan-out, no memory.
 - The stem list is a judgement call and can be wrong in both directions. A

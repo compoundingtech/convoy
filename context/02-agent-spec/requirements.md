@@ -112,11 +112,12 @@ Refines [CV-R04](../requirements.md), [CV-R03](../requirements.md), and [CV-R07]
   already propagated to every peer.
 - **SPEC-R15 Network-scoped uniqueness:** Identities must be unique within a
   network rather than within a machine, since the catalog is shared.
-- **SPEC-R16 Counters get no durable memory:** An identity of the form
-  `<role>-<n>` names a position, not an agent, and re-derives to a different agent
-  across parent lifetimes. Convoy must refuse to create durable per-agent context
-  under such an identity, and the refusal must explain that a meaningful name
-  resolves it.
+- **SPEC-R16 Counters are not seeded with durable memory:** An identity of the
+  form `<role>-<n>` names a position, not an agent, and re-derives to a different
+  agent across parent lifetimes. Convoy must refuse to create durable per-agent
+  context under such an identity, and the refusal must explain both that a
+  meaningful name resolves it and that declining to create the directory does not
+  prevent the bus from creating it on demand.
 
 ### Must Support Correction
 

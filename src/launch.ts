@@ -146,8 +146,12 @@ export function dingCommand(busId: string, claudeSessionId: string, root?: strin
  *  weeks after the naming choice, which is exactly the kind a warning does not prevent.
  *
  *  So the dir is REFUSED rather than warned about, and the refusal is narrow: the agent still launches and
- *  still gets a bus folder, it just has no durable context to misattribute. Returns the refusal message
- *  when it declined, else null. */
+ *  still gets a bus folder — convoy just does not hand it a pre-made place to keep memory.
+ *
+ *  This is a strong DEFAULT, not an invariant. The dir is not convoy's to withhold: `st context write`
+ *  creates it unconditionally, so an agent that externalizes work state makes its own. What this removes
+ *  is the case where a renumbered agent finds one already waiting for it. Real enforcement belongs where
+ *  the dir is created (the bus) — see context/.delta/DELTA-005. Returns the refusal message, else null. */
 export function provisionContext(memberDir: string, identity: string): string | null {
   const refusal = counterContextRefusal(identity);
   if (refusal !== null) {

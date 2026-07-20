@@ -61,7 +61,7 @@ describe("identity length — derived from pty's socket, not a taste bound", () 
   });
 });
 
-describe("counter discriminators — structurally refused, not discouraged", () => {
+describe("counter discriminators — convoy declines to seed, which is a default not an invariant", () => {
   it("recognises a counter under every role name and alias", () => {
     for (const stem of COUNTER_STEMS) expect(counterStem(`${stem}-1`), stem).toBe(stem);
     expect(counterStem("worker-12")).toBe("worker");
@@ -80,10 +80,17 @@ describe("counter discriminators — structurally refused, not discouraged", () 
     }
   });
 
-  it("explains the inheritance failure it prevents, not just that it refused", () => {
+  it("explains the inheritance failure it narrows, not just that it refused", () => {
     const msg = counterContextRefusal("worker-2");
     expect(msg).toMatch(/re-derives per parent lifetime/);
     expect(msg).toMatch(/context\/now\.md/);
+  });
+
+  it("is honest that it is a DEFAULT, not an invariant — the bus creates the dir on demand", () => {
+    // Convoy can decline to seed context/; it cannot stop `st context write` from mkdir -p'ing it.
+    // The message must not imply a guarantee convoy is not in a position to make (DELTA-005).
+    const msg = counterContextRefusal("worker-2") ?? "";
+    expect(msg).toMatch(/the bus still would on demand/);
   });
 
   it("does not make a counter-named identity undeclarable — only its durable context/ is refused", () => {

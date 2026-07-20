@@ -86,10 +86,12 @@ sends to it afterwards will create a folder nobody reads. Moving the folder is
 what saves in-flight mail; the tombstone is what keeps convoy's own view
 coherent. See [DELTA-002](./.delta/DELTA-002-stale-sends-to-a-renamed-identity.md).
 
-The same reasoning explains why a counter-named agent gets no durable context. A
-`worker-2` is only `worker-2` for one parent lifetime, so memory addressed by
-that name will eventually be read by a stranger. The name is allowed; the memory
-is not.
+The same reasoning explains why convoy will not seed durable context for a
+counter-named agent. A `worker-2` is only `worker-2` for one parent lifetime, so
+memory addressed by that name will eventually be read by a stranger. The name is
+allowed; convoy just will not prepare a place to keep memory under it. Note this
+is a default and not an invariant — the bus creates the directory on demand, so
+an agent determined to externalize state still can.
 
 ## Where to read next
 
