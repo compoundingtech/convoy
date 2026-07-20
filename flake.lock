@@ -75,11 +75,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1784579512,
-        "narHash": "sha256-S6qyeLfTRXgPt0PF7ZCEEuEm0k1dvAeDa54mdEAzKSg=",
+        "lastModified": 1784582866,
+        "narHash": "sha256-ZJN8bZafY/ntKtvVYWxP9JQFUbeTYrhdzf3SA3hpwAs=",
         "owner": "compoundingtech",
         "repo": "smalltalk",
-        "rev": "ec24ac4677e67216de75a8cb7de819a55cde3233",
+        "rev": "850266f8551335771b2d922a7456e7246621c737",
         "type": "github"
       },
       "original": {
