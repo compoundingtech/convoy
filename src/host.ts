@@ -128,6 +128,26 @@ export function manifestWorkspace(s: SupervisedSession): string | null {
   return pf ? workspaceOfPtyfile(pf) : null;
 }
 
+/** The manifest session key that names the DING SIDECAR limb — the subordinate watcher, as opposed to the
+ *  PROVIDER limb that actually runs the harness (`claude` / `codex`). */
+export const DING_SESSION_KEY = "ding";
+
+/** Is this session an agent's ding SIDECAR rather than its provider? The two limbs are not peers, and
+ *  recovery must not treat them as such: the provider IS the agent (it holds the conversation and the
+ *  in-progress work), while the sidecar is a replaceable watcher bound to it. A sidecar's death says
+ *  nothing about the provider's health, so it is never grounds for tearing the provider down. */
+export function isSidecarLimb(s: SupervisedSession): boolean {
+  return s.tags["ptyfile.session"] === DING_SESSION_KEY;
+}
+
+/** Is the PROVIDER limb of `workspace`'s agent still standing? Recovery's routing question: a dead sidecar
+ *  next to a live provider is a sidecar-scale problem (restart the sidecar alone), whereas a dead sidecar
+ *  next to a dead provider is agent-scale (replay the whole manifest). Uses the same adopt-alive liveness
+ *  reading as everywhere else — reported-gone but pid-alive still counts as ALIVE. */
+export function providerAlive(workspace: string, sessions: readonly SupervisedSession[]): boolean {
+  return sessions.some((s) => manifestWorkspace(s) === workspace && !isSidecarLimb(s) && (!gone(s) || processAlive(s.pid)));
+}
+
 /** A stable, human-readable logical id — `<agent-dir>/<session-key>` (e.g. `convoy/claude`) from the
  *  persistent ptyfile tags; survives respawns + `pty kill`. Falls back to the pty id. */
 export function logicalId(s: SupervisedSession): string {
@@ -138,6 +158,13 @@ export function logicalId(s: SupervisedSession): string {
   // WORKSPACE, not the overlay dir (basename(dirname()) alone would yield ".convoy" for every agent).
   const dir = ptyfile ? basename(workspaceOfPtyfile(ptyfile)) : s.cwd ? basename(s.cwd) : "";
   return dir ? `${dir}/${session}` : session;
+}
+
+/** The two effects `replayManifest` sequences — stopping a live limb, and cold-booting the manifest.
+ *  Injectable so replay's ORDERING and error handling can be asserted without spawning real processes. */
+export interface ReplayIO {
+  kill: (name: string) => Promise<boolean>;
+  spawn: (workspace: string) => Promise<{ spawned: string[]; failed: string[] }>;
 }
 
 /** Drives pty natively via `@compoundingtech/pty/client`. `root` pins the network's `PTY_ROOT`. */
@@ -202,10 +229,19 @@ export class PtyHost {
    *  worse, a reused sidecar stays bound to the provider that just died. Tearing both down and replaying
    *  the manifest is the only state that is simple to reason about: whatever the manifest says, is what
    *  runs. */
-  async replayManifest(workspace: string, survivors: readonly SupervisedSession[]): Promise<{ spawned: string[]; failed: string[] }> {
-    for (const s of survivors) await this.kill(s.name);
+  async replayManifest(
+    workspace: string,
+    survivors: readonly SupervisedSession[],
+    // The two EFFECTS this method sequences, injected so the sequencing itself is testable. Everything
+    // that makes replay correct is ordering and result-propagation — kill before spawn, never the
+    // reverse; a throw becomes a reported failure, not an exception escaping into the reconcile loop —
+    // and none of that is observable without a seam. The defaults bind the real pty operations, so every
+    // caller is unchanged; only tests pass this third argument.
+    io: ReplayIO = { kill: (n) => this.kill(n), spawn: (w) => spawnFromPtyFile(w, this.root) },
+  ): Promise<{ spawned: string[]; failed: string[] }> {
+    for (const s of survivors) await io.kill(s.name);
     try {
-      return await spawnFromPtyFile(workspace, this.root);
+      return await io.spawn(workspace);
     } catch {
       return { spawned: [], failed: ["<manifest unreadable>"] }; // a missing/corrupt pty.toml is a failed attempt, not a crash
     }

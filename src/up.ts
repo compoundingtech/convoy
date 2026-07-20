@@ -21,7 +21,7 @@ import {
   type StrategyTags,
 } from "./flapping-cap.ts";
 import { HostLock } from "./host-lock.ts";
-import { commandHashOf, gone, isPermanent, logicalId, manifestWorkspace, processAlive, PtyHost, type SupervisedSession } from "./host.ts";
+import { commandHashOf, gone, isPermanent, isSidecarLimb, logicalId, manifestWorkspace, processAlive, providerAlive, PtyHost, type SupervisedSession } from "./host.ts";
 import { agentBusId, readCatalog, reconcilePlan } from "./reconcile.ts";
 import { agentFileToSpec, catalogDir } from "./agent-file.ts";
 import { declareCatalogSync } from "./fabric-sync.ts";
@@ -87,7 +87,33 @@ export function workerCrashed(status: SupervisedSession["status"], exitCode: num
 export function survivingLimbs(dead: SupervisedSession, sessions: readonly SupervisedSession[]): SupervisedSession[] {
   const workspace = manifestWorkspace(dead);
   if (workspace === null) return [];
+  // A dead SIDECAR never tears anything down. Read symmetrically, the provider-death rule below would
+  // otherwise return the sidecar's own LIVE PROVIDER as a limb to kill — a supervisor destroying the
+  // in-progress work it exists to protect, and a breach of the ADOPT-ALIVE invariant the respawn path
+  // holds everywhere else. The limbs are not peers: the provider IS the agent, the sidecar is a
+  // replaceable watcher bound to it. `up` routes a recoverable sidecar to an in-place restart instead;
+  // this guard makes the pure function honest on its own, independent of that routing.
+  if (isSidecarLimb(dead)) return [];
   return sessions.filter((o) => o.name !== dead.name && manifestWorkspace(o) === workspace && (!gone(o) || processAlive(o.pid)));
+}
+
+/** Did a manifest replay actually RECOVER the agent? Only if every declared limb came up (convoy#82).
+ *
+ *  The tempting reading — "something spawned, so we made progress" — collapses PARTIAL failure into
+ *  success, and partial failure is the shape this path produces most: replay kills the surviving limbs and
+ *  immediately re-spawns the manifest's PINNED session ids, and a spawn racing a kill on a pinned id is
+ *  precisely what throws. So the provider throws, the ding succeeds, and `spawned.length > 0` calls it a
+ *  win. The consequences compound: the success path runs, `classifyFailedAttempt` never fires, the
+ *  consecutive-failure counter stays pinned at 0, and the cap it feeds can never engage. The agent is
+ *  never recovered, never parked, and never dinged — it just churns, and because the counter persists to
+ *  tags, a fresh `--once` run inherits the same 0 and churns identically.
+ *
+ *  An agent is its limbs TOGETHER: a provider with no ding gets no work, a ding with no provider pokes a
+ *  corpse. Neither is a recovered agent, so neither is a success. Requiring a clean sweep makes the failure
+ *  visible to the cap on the very first attempt, which is what turns an unbounded silent retry into a
+ *  bounded one that parks and pages. */
+export function replaySucceeded(r: { spawned: readonly string[]; failed: readonly string[] }): boolean {
+  return r.failed.length === 0 && r.spawned.length > 0;
 }
 
 /** Who to ding when `crashed` crash-loops / vanishes: (a) the CoS — ALWAYS (a network-wide backstop),
@@ -362,10 +388,24 @@ export async function up(opts: UpOptions): Promise<number> {
         // spec) and COLD BOOT the agent's whole limb set from it. Both limbs go together and survivors are
         // killed first — see host.replayManifest. A session with no manifest (hand-spawned, never launched
         // by convoy) has no launch spec to replay, so it keeps the in-place restart.
+        //
+        // Replay is AGENT-SCALE, so it is gated on AGENT-SCALE death: the provider being gone. A dead ding
+        // SIDECAR beside a LIVE provider is a sidecar-scale problem and gets a sidecar-scale response — an
+        // in-place restart of the sidecar alone, which is what this loop did before replay existed and
+        // which pty permits (its stateful-agent guard refuses `role=agent`, not `role=ding`). Routing it
+        // into replay instead would kill a healthy provider mid-task to recover its watcher: a cure
+        // categorically worse than the disease, and worse than the bug replay was written to fix.
         const workspace = manifestWorkspace(s);
         let ok: boolean;
         if (workspace === null) {
           ok = await host.respawn(s); // no manifest → in-place restart (unchanged legacy path)
+        } else if (isSidecarLimb(s) && providerAlive(workspace, sessions)) {
+          // Sidecar died, provider still standing → restart the sidecar alone. Ordering note: this is
+          // checked BEFORE the `replayed` gate on purpose, but only fires while the provider LIVES. When
+          // both limbs are gone the provider is not alive, so a dead sidecar falls through to the replay
+          // path and is covered by the agent's single manifest replay — never restarted in place first,
+          // which would collide with the pinned id that replay is about to re-spawn.
+          ok = await host.respawn(s);
         } else if (replayed.has(workspace)) {
           // Both limbs of ONE agent died this tick. The manifest relaunches every limb, so the first
           // replay already covered this session — replaying again would double-spawn the whole agent.
@@ -376,7 +416,7 @@ export async function up(opts: UpOptions): Promise<number> {
           // bound to a corpse). Scoped to sessions sharing this workspace — never a pattern match.
           const survivors = survivingLimbs(s, sessions);
           const r = await host.replayManifest(workspace, survivors);
-          ok = r.spawned.length > 0;
+          ok = replaySucceeded(r); // ANY failed limb = a failed attempt, so the cap actually advances
           emit(
             { type: "replay", identity: logicalId(s), workspace, spawned: r.spawned, failed: r.failed, killed: survivors.map((o) => o.name), ts: isoString(now) },
             `[convoy-up] replay ${logicalId(s)} — cold-booted ${r.spawned.length} limb(s) from ${workspace}/.convoy/pty.toml${survivors.length ? ` (tore down ${survivors.length} surviving limb(s))` : ""}${r.failed.length ? ` — ${r.failed.length} FAILED` : ""}`,
