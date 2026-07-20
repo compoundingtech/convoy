@@ -1,11 +1,11 @@
 import { afterEach, describe, it, expect } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentForest, checkPtyRoot, existingPtyTomlIdentity, formatActivityAge, hostPrefixedIdentity, networkEnvExports, optValue, pathTooLongMessage, positionals, PTY_ROOT_MAX_BYTES, readAgentPresence, renderForest, resolveNetworkEnv, resolveNetworkRoot, shellQuote, shortHost, unknownFlag, type LocalInfo } from "./commands.ts";
+import { agentForest, checkPtyRoot, existingPtyTomlIdentity, formatActivityAge, hostPrefixedIdentity, networkEnvExports, optValue, pathTooLongMessage, positionals, PTY_ROOT_MAX_BYTES, readAgentPresence, renderForest, resolveNetworkEnv, resolveNetworkRoot, retireInCatalog, shellQuote, shortHost, unknownFlag, type LocalInfo } from "./commands.ts";
 import { shortHostname } from "./agent-spec.ts";
 import { convoyHome, defaultConvoyNetwork, isNetworkName, networkDirForName, networkDirOfStRoot } from "./paths.ts";
-import { agentFilePath, catalogDir } from "./agent-file.ts";
+import { agentFilePath, catalogDir, readAgentFile, writeAgentFile } from "./agent-file.ts";
 import type { Agent } from "./bus.ts";
 
 describe("arg parsing: --flag=value form (silent-default trap)", () => {
@@ -37,6 +37,52 @@ describe("unknownFlag (reject silently-ignored flags — footgun #3)", () => {
   it("does not mistake a value token for an unknown flag", () => {
     // --network's value could itself start with '-' only if quoted; normal values are skipped
     expect(unknownFlag(["worker", "--network", "/tmp/n", "--identity", "wk"], bool, value)).toBeNull();
+  });
+});
+
+describe("retireInCatalog — `convoy remove` decommission = set retired=true (union-safe), NEVER delete the file", () => {
+  const roots: string[] = [];
+  afterEach(() => { for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true }); });
+  const tmpCatalog = (): string => {
+    const d = mkdtempSync(join(tmpdir(), "convoy-retire-"));
+    roots.push(d);
+    const c = catalogDir(d);
+    mkdirSync(c, { recursive: true });
+    return c;
+  };
+
+  it("sets retired=true on the agent file (the file STAYS — a delete would be undone by the union/no-delete sync)", () => {
+    const catalog = tmpCatalog();
+    const p = agentFilePath(catalog, "iroh");
+    writeAgentFile(p, { identity: "iroh", role: "worker" });
+    const r = retireInCatalog(catalog, "iroh");
+    expect(r?.already).toBe(false);
+    expect(r?.path).toBe(p);
+    expect(existsSync(p)).toBe(true); // NOT deleted
+    expect(readAgentFile(p).retired).toBe(true); // marked retired → reconcile tears down + never relaunches
+  });
+
+  it("resolves a HOST-PREFIXED bus id (`<host>.<identity>`, what `convoy ls` shows) by stripping the prefix", () => {
+    const catalog = tmpCatalog();
+    writeAgentFile(agentFilePath(catalog, "evals-codex"), { identity: "evals-codex", role: "worker" });
+    const r = retireInCatalog(catalog, "silber.evals-codex");
+    expect(r?.path).toBe(agentFilePath(catalog, "evals-codex"));
+    expect(readAgentFile(agentFilePath(catalog, "evals-codex")).retired).toBe(true);
+  });
+
+  it("already-retired → already:true, no rewrite, and orthogonal fields (strategy) preserved", () => {
+    const catalog = tmpCatalog();
+    const p = agentFilePath(catalog, "wk");
+    writeAgentFile(p, { identity: "wk", role: "worker", strategy: "permanent", retired: true });
+    const r = retireInCatalog(catalog, "wk");
+    expect(r?.already).toBe(true);
+    const af = readAgentFile(p);
+    expect(af.retired).toBe(true);
+    expect(af.strategy).toBe("permanent"); // "a retired permanent" — orthogonal axis preserved
+  });
+
+  it("no catalog entry for the id → null (nothing to retire)", () => {
+    expect(retireInCatalog(tmpCatalog(), "ghost")).toBeNull();
   });
 });
 

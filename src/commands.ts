@@ -987,6 +987,25 @@ export async function cmdLs(args: string[]): Promise<number> {
   return 0;
 }
 
+/** DECOMMISSION an agent in the catalog: set `retired = true` in its agent file — NEVER delete the file. The
+ *  catalog syncs UNION / no-delete (see agent-file.ts), so a file DELETE is undone by a peer (the agent then
+ *  respawns), while a `retired = true` EDIT syncs newer-wins and `convoy up` reconcile tears the agent down +
+ *  never relaunches it — on every machine. Resolves the file from either a BARE identity (the catalog stem, as
+ *  `convoy render` takes) or a host-prefixed BUS id (`<host>.<identity>`, what `convoy ls` shows — strips the
+ *  leading `<host>.`). Returns `{ path, already }` when a catalog file is found (`already` = it was already
+ *  retired, so no rewrite), or `null` when there is no catalog entry for the id. Pure-ish (fs) → unit-testable. */
+export function retireInCatalog(catalog: string, identity: string): { path: string; already: boolean } | null {
+  let path = agentFilePath(catalog, identity);
+  if (!existsSync(path) && identity.includes(".")) {
+    path = agentFilePath(catalog, identity.slice(identity.indexOf(".") + 1)); // strip a leading <host>. bus prefix
+  }
+  if (!existsSync(path)) return null;
+  const af = readAgentFile(path);
+  if (af.retired) return { path, already: true };
+  writeAgentFile(path, { ...af, retired: true });
+  return { path, already: false };
+}
+
 export async function cmdRemove(args: string[]): Promise<number> {
   const badFlag = unknownFlag(args, ["--dry-run"], ["--network"]);
   if (badFlag) {
@@ -999,9 +1018,16 @@ export async function cmdRemove(args: string[]): Promise<number> {
     err("missing identity. Usage: convoy remove <id>");
     return 2;
   }
+  // Resolve the catalog agent file up front (bare id or host-prefixed bus id). An agent "exists" if it has a
+  // catalog entry OR is a live bus member — a DECLARED-but-down agent (catalog entry, no session) is still
+  // removable (that's exactly the decommission case).
+  const catalog = catalogDir(network);
+  let afPath = agentFilePath(catalog, identity);
+  if (!existsSync(afPath) && identity.includes(".")) afPath = agentFilePath(catalog, identity.slice(identity.indexOf(".") + 1));
+  const hasCatalogEntry = existsSync(afPath);
   const members = (await new Bus(stRootOf(network)).agents()).map((a) => a.identity);
-  if (!members.includes(identity)) {
-    err(`no agent "${identity}" on this network. \`convoy ls\` to list members.`);
+  if (!hasCatalogEntry && !members.includes(identity)) {
+    err(`no agent "${identity}" on this network (no catalog entry and not a live member). \`convoy ls\` to list members.`);
     return 1;
   }
   const host = new PtyHost(network);
@@ -1010,12 +1036,19 @@ export async function cmdRemove(args: string[]): Promise<number> {
     return s.name === identity || dn === identity || ["claude", "codex", "ding"].some((suf) => `${identity}-${suf}` === dn);
   });
   out("convoy remove — plan:");
+  // Decommission = set retired=true (the union-safe edit), NOT delete — a deleted catalog file is restored by a
+  // peer's union/no-delete sync, so the agent respawns; retired=true syncs + reconcile tears it down for good.
+  if (hasCatalogEntry) out(`  set retired=true in ${afPath} (the union-safe decommission — syncs to peers; reconcile won't relaunch)`);
+  else out(`  no catalog entry for "${identity}" — stopping its sessions only (nothing to retire)`);
   if (sessions.length === 0) out(`  no running pty sessions for ${identity} (already down)`);
   for (const s of sessions) out(`  stop pty session ${s.name}`);
   if (hasFlag(args, "--dry-run")) {
     out("\n✓ Dry run only. Re-run without --dry-run to execute.");
     return 0;
   }
+  const retired = retireInCatalog(catalog, identity);
+  if (retired && !retired.already) out(`✓ set retired=true for ${identity} (${retired.path})`);
+  else if (retired?.already) out(`  ${identity} was already retired=true`);
   for (const s of sessions) out((await host.kill(s.name)) ? `✓ stopped ${s.name}` : `• ${s.name} didn't stop cleanly (already exited?)`);
   out(`✓ ${identity} removed from the convoy.`);
   return 0;
