@@ -801,6 +801,8 @@ export async function cmdCos(args: string[]): Promise<number> {
     permanentOverride: null,
     prefix: optValue(args, "--prefix"),
     configDir: optValue(args, "--config-dir"),
+    bin: null,
+    env: null,
     model: null, // `convoy cos` (direct CoS launch) uses the harness default; per-agent --model is a `convoy add` feature
   };
   const rc = await launchSpec(spec, { dryRun, force: hasFlag(args, "--force") });

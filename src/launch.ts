@@ -116,10 +116,14 @@ function hookRefs(): { stBin: string; sessionStart: string; preCompact: string; 
  *  approvals + sandbox (the parallel to claude's bypass posture). `model` (null → the harness default,
  *  today's behavior) adds `--model '<id>'` — single-quoted for `sh -c`, and the id is charset-validated
  *  upstream (isValidModel) so the quotes can't be broken out of. Both harnesses accept `--model`. */
-export function harnessCommand(harness: Harness, permissionMode: string, prompt: string, model?: string | null): string {
+export function harnessCommand(harness: Harness, permissionMode: string, prompt: string, model?: string | null, bin?: string | null): string {
   const modelFlag = model ? ` --model '${model}'` : "";
-  if (harness === "codex") return `exec codex --dangerously-bypass-approvals-and-sandbox${modelFlag} '${prompt}'`;
-  return `exec claude --permission-mode ${permissionMode}${modelFlag} '${prompt}'`;
+  // `bin` replaces ONLY the binary name; every derived flag still applies, so a wrapper inherits the
+  // correct-by-construction wiring instead of having to re-derive it. Charset-validated upstream
+  // (isValidBin) because it lands unquoted in the `sh -c` string.
+  const cmd = bin || harness;
+  if (harness === "codex") return `exec ${cmd} --dangerously-bypass-approvals-and-sandbox${modelFlag} '${prompt}'`;
+  return `exec ${cmd} --permission-mode ${permissionMode}${modelFlag} '${prompt}'`;
 }
 
 /** The ding sidecar command — pokes the agent's claude session when its bus inbox gets mail. Points at
@@ -158,13 +162,16 @@ export function writePtyToml(dir: string, spec: AgentSpec, opts?: { spawner?: st
   }
   // CLAUDE_CONFIG_DIR relocates Claude Code's whole config (auth/settings/skills) — harness session only,
   // never the ding sidecar (which is just `st ding` and doesn't read it).
-  const harnessEnv = spec.configDir ? { ...env, CLAUDE_CONFIG_DIR: spec.configDir } : env;
+  // Spec `env` first, derived wiring LAST: ST_AGENT/ST_ROOT/PTY_ROOT are correct-by-construction (AC-1)
+  // and a hand-written env key must never be able to repoint the agent at another bus.
+  const specEnv = spec.env ?? {};
+  const harnessEnv = { ...specEnv, ...env, ...(spec.configDir ? { CLAUDE_CONFIG_DIR: spec.configDir } : {}) };
   const doc: Record<string, unknown> = {
     prefix: harnessId,
     sessions: {
       [HARNESS_SESSION_KEY[spec.harness]]: {
         id: harnessId,
-        command: harnessCommand(spec.harness, specPermissionMode(spec), bootPrompt(spec.role), spec.model),
+        command: harnessCommand(spec.harness, specPermissionMode(spec), bootPrompt(spec.role), spec.model, spec.bin),
         tags: { role: "agent", ...(permanent ? { strategy: "permanent" } : {}), ...stTag, ...agentTags },
         env: harnessEnv,
       },
