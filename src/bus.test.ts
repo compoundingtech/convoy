@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Bus, isLive } from "./bus.ts";
 
-// Lay agents out on the bus the way @myobie/coord's reader discovers them: a per-agent dir that is
+// Lay agents out on the bus the way @compoundingtech/smalltalk's reader discovers them: a per-agent dir that is
 // "agent-shaped" (has an inbox/ or archive/) with an optional `status` file. Inbox counts only count
 // valid-grammar message files (<ms-ts>-<rand6>.md), mirroring smalltalk's own bus-reader fixtures.
 function putAgent(root: string, id: string, state?: string): void {
@@ -15,7 +15,7 @@ function putInbox(root: string, id: string, name: string, body = "x"): void {
   writeFileSync(join(root, id, "inbox", name), body);
 }
 
-describe("Bus.agents — backed by @myobie/coord createBusReader (no st shell-out)", () => {
+describe("Bus.agents — backed by @compoundingtech/smalltalk createBusReader (no st shell-out)", () => {
   const roots: string[] = [];
   afterEach(() => {
     for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true });

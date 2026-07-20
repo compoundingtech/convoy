@@ -1,4 +1,4 @@
-# Node / TypeScript (the TS port — see notes/TS-PORT-PLAN.md)
+# Node / TypeScript (the TS port)
 node_modules/
 dist/
 *.tsbuildinfo

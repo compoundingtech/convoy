@@ -32,6 +32,19 @@ The metaphor: your agents travel together like a convoy, and each can carry **si
 
 The philosophy behind all of it is in the [manifesto](MANIFESTO.md).
 
+## Quickstart — adopt it in isolation
+
+Once the three tools are on your PATH (see [Getting Started](#getting-started) for the one-time sibling clone + build), standing a network up end-to-end is **`init` → `doctor` → `up`**:
+
+```sh
+convoy init ~/nets/demo     # stand up a network (use a SHORT path — PTY_ROOT is <net>/pty, ≤ 90 bytes)
+convoy doctor               # prove THIS machine can do real agent work — honest: no false negatives
+convoy add worker --identity wk --dir ~/repos/app   # DECLARE an agent into the synced catalog (launches nothing)
+convoy up ~/nets/demo       # reconcile the catalog: render + launch + supervise this host's agents
+```
+
+That's the whole on-ramp — convoy pulls **smalltalk** (the bus) and **pty** (the sessions) into one network you bring up with one command. `convoy doctor` won't lie to you: it runs a **real signed-in auth probe** per harness and locates the hooks the way they're actually wired (via `ST_BIN`, not just `st` on `$PATH`), so a green doctor genuinely means it works — it reports "couldn't verify" rather than a false "not present" / "not signed in". Stopping `convoy up` leaves the agents running; `convoy down` tears the network down.
+
 ## Status
 
 Early but real. The CLI is a **TypeScript package** (Node ≥23.6, which strips the types at load — no build step) that **orchestrates** the existing tools (it drives `st` and `pty`; it reimplements neither). `ls`, `doctor`, `init`, `add`, `remove`, `cos`, `up`, `down`, and `reload` work against the live bus today.
@@ -55,7 +68,7 @@ git clone https://github.com/compoundingtech/convoy
 **2. Build pty, then install smalltalk + convoy:**
 
 ```sh
-( cd pty && npm install && npm run build )   # REQUIRED — convoy imports @myobie/pty from ../pty
+( cd pty && npm install && npm run build )   # REQUIRED — convoy imports @compoundingtech/pty from ../pty
 ( cd smalltalk && npm install )
 ( cd convoy && npm install )
 ```
@@ -66,7 +79,7 @@ git clone https://github.com/compoundingtech/convoy
 node convoy/bin/convoy install-cli   # symlinks all three into ~/.local/bin (override: --bin <dir>)
 ```
 
-`install-cli` runs through `node` so it works before `convoy` is on PATH, is idempotent, and prints the exact **shell-specific** line to add `~/.local/bin` to your PATH if it isn't already (then restart your shell). **Do not use `npm link`** — a global `npm link` can pollute the shared `@myobie/pty` symlink and silently break ding delivery for the whole network.
+`install-cli` runs through `node` so it works before `convoy` is on PATH, is idempotent, and prints the exact **shell-specific** line to add `~/.local/bin` to your PATH if it isn't already (then restart your shell). **Do not use `npm link`** — a global `npm link` can pollute the shared `@compoundingtech/pty` symlink and silently break ding delivery for the whole network.
 
 **4. Confirm the machine is ready, then stand up a network:**
 

@@ -1,7 +1,7 @@
 // `convoy up <network>` — the foreground host (ported from Sources/convoy/Commands/Up.swift). The
 // reboot's load-bearing verb: it brings the network's permanent sessions up as its own children (TCC
 // anchor) and reconciles them every interval — respawn on exit (resuming), crash-loop flapping-cap.
-// Built on the NATIVE host (src/host.ts, @myobie/pty/client) + the §5 classifier (src/flapping-cap.ts).
+// Built on the NATIVE host (src/host.ts, @compoundingtech/pty/client) + the §5 classifier (src/flapping-cap.ts).
 
 import { existsSync, mkdirSync, readFileSync, watch, type FSWatcher } from "node:fs";
 import { dirname, join } from "node:path";

@@ -12,7 +12,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statS
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isGone } from "@myobie/pty/client";
+import { isGone } from "@compoundingtech/pty/client";
 import { childEnv, run } from "../exec.ts";
 import { stRootOf } from "../paths.ts";
 import { shortHostname } from "../agent-spec.ts";

@@ -1223,6 +1223,6 @@ export async function cmdApp(args: string[]): Promise<number> {
     out(`  ${running ? "✓" : "•"} ${running ? "menubar app running" : "menubar app not running"}`);
     return 0;
   }
-  out("convoy app: the macOS app now lives in the convoy-macos repo (see notes/TS-PORT-PLAN.md §6).");
+  out("convoy app: the macOS app now lives in the convoy-macos repo.");
   return 0;
 }

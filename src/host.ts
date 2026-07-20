@@ -1,5 +1,5 @@
 // The pty host, native. Where the Swift PtyHost shelled `pty list/tag/restart/kill` and parsed JSON,
-// the TS port drives `@myobie/pty/client` directly — the same lib pty's own TUIs consume. Typed
+// the TS port drives `@compoundingtech/pty/client` directly — the same lib pty's own TUIs consume. Typed
 // SessionMetadata (tags, exitedAt, command/args) instead of a JSON re-parse; `spawnDaemon` for respawn
 // instead of `pty restart` (the spec §5.3 respawn primitive); `updateTags` for the strategy tags.
 
@@ -12,7 +12,7 @@ import {
   spawnDaemon,
   updateTags,
   type SessionInfo,
-} from "@myobie/pty/client";
+} from "@compoundingtech/pty/client";
 import { commandFingerprint, parseStrategyTags, type StrategyTags } from "./flapping-cap.ts";
 import { CONVOY_DIR, stRootOf } from "./paths.ts";
 import { childEnv, run } from "./exec.ts";
@@ -130,7 +130,7 @@ export function logicalId(s: SupervisedSession): string {
   return dir ? `${dir}/${session}` : session;
 }
 
-/** Drives pty natively via `@myobie/pty/client`. `root` pins the network's `PTY_ROOT`. */
+/** Drives pty natively via `@compoundingtech/pty/client`. `root` pins the network's `PTY_ROOT`. */
 export class PtyHost {
   readonly root: string | null;
 

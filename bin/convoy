@@ -15,7 +15,7 @@ try {
     const detail = "message" in err ? String(err.message).split("\n")[0] : "a dependency is missing";
     console.error(
       `convoy: failed to load — ${detail}.\n` +
-        "convoy depends on @myobie/pty via file:../pty, so build + install its deps first:\n" +
+        "convoy depends on @compoundingtech/pty via file:../pty, so build + install its deps first:\n" +
         "  cd ../pty && npm install && npm run build   # build pty (required)\n" +
         "  npm install                                 # in convoy\n" +
         "See BUILD.md.",

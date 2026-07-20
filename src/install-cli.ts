@@ -1,5 +1,5 @@
 // `convoy install-cli` — put the three CLIs (convoy, st, pty) on PATH RELIABLY, without the `npm link` footgun
-// (a global `npm link` polluted the shared @myobie/pty symlink and silently killed ding delivery network-wide).
+// (a global `npm link` polluted the shared @compoundingtech/pty symlink and silently killed ding delivery network-wide).
 // It symlinks each tool's repo bin into a writable PATH dir (default ~/.local/bin), idempotently, then verifies.
 // The tools live in sibling repos (convoy + smalltalk + pty cloned side by side), so the sources resolve
 // relative to the convoy clone. Pure node fs (portable macOS + Linux); the command layer prints the outcome.
