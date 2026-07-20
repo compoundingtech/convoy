@@ -35,12 +35,13 @@ export interface AgentFile {
   persona?: string;
   /** Optional supervision strategy — "permanent" (respawned by `convoy up`, piece 3). Omit → derive from role. */
   strategy?: "permanent";
-  /** Lifecycle marker: `retired = true` DECOMMISSIONS the agent. Because the catalog syncs UNION/no-delete (a
-   *  local `rm` just re-propagates from a peer), removal is an EDIT, not a file delete — set retired=true and
-   *  the union-sync carries it (newer-wins) everywhere; `convoy up` reconcile (piece 3) then tears the agent
-   *  down + does NOT launch it. A SEPARATE axis from `strategy` (respawn behavior) so "a retired permanent" is
-   *  expressible + reconcile reads two orthogonal signals. Forward-compat here (parsed + serialized); honored
-   *  by reconcile in piece 3. Decided with cos + smalltalk as the catalog's cross-machine removal semantics. */
+  /** Lifecycle marker: `retired = true` DECOMMISSIONS the agent. Because the catalog is synced by `fabric sync`
+   *  under the UNION / no-delete "catalog" policy (a local `rm` just re-propagates from a peer), removal is an
+   *  EDIT, not a file delete — `convoy remove` sets retired=true and the sync carries it (newer-wins) everywhere;
+   *  `convoy up` reconcile then tears the agent down + does NOT launch it. A SEPARATE axis from `strategy`
+   *  (respawn behavior) so "a retired permanent" is expressible + reconcile reads two orthogonal signals.
+   *  Forward-compat here (parsed + serialized); honored by reconcile. The catalog's cross-machine removal
+   *  semantics ARE fabric's "catalog" policy (no-delete/no-sweep/no-tombstones) — see src/fabric-sync.ts. */
   retired?: boolean;
   /** Forward-compat: crash-ding tier. v1 derives it from role (chief-of-staff → cos); carried for piece 2/3. */
   tier?: string;
@@ -48,8 +49,10 @@ export interface AgentFile {
   env?: Record<string, string>;
 }
 
-/** The catalog dir for a network — `<net>/catalog/`. SYNCED across machines (like `<net>/smalltalk/`,
- *  parallel to the machine-local `<net>/pty/`); it's the cross-machine scheduler in the declarative model. */
+/** The catalog dir for a network — `<net>/catalog/`. SYNCED across machines by `fabric sync` (convoy declares
+ *  it — see src/fabric-sync.ts), distinct from the smalltalk bus at `<net>/smalltalk/` (fabric syncs the
+ *  catalog; smalltalk syncs the bus) and the machine-local `<net>/pty/`; it's the cross-machine scheduler in
+ *  the declarative model. */
 export function catalogDir(networkDir: string): string {
   return join(networkDir, "catalog");
 }

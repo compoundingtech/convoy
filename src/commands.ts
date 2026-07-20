@@ -16,6 +16,7 @@ import { PtyHost, spawnFromPtyFile, workspaceOfPtyfile, type SupervisedSession }
 import { busIdOf } from "./up.ts";
 import { discoverSmalltalkDir, nativeLaunch, regenerateDingRoot, writeAgentFiles } from "./launch.ts";
 import { agentFilePath, agentFileToSpec, agentFileToToml, catalogDir, readAgentFile, writeAgentFile, SAMPLE_AGENT_TOML, type AgentFile } from "./agent-file.ts";
+import { declareCatalogSync } from "./fabric-sync.ts";
 import { authReadiness } from "./doctor/auth.ts";
 import { harnessCheckups } from "./doctor/checkup.ts";
 import { gitUsableCheck, nodeVersionCheck, osCheck, tmpdirSocketCheck } from "./doctor/env.ts";
@@ -577,7 +578,7 @@ export async function cmdInit(args: string[]): Promise<number> {
   // 3. Create the structure + config, narrating each step.
   say("→ Creating the network structure (smalltalk/ = the bus · catalog/ = agent files (desired state) · pty/ = runtime · worktrees/ = workspaces)…");
   mkdirSync(layout.stRoot, { recursive: true });
-  mkdirSync(catalogDir(dir), { recursive: true }); // the SYNCED catalog — `convoy add` writes agent files here; smalltalk syncs it like smalltalk/ (piece 2C)
+  mkdirSync(catalogDir(dir), { recursive: true }); // the catalog — `convoy add` writes agent files here (desired state); convoy declares it to `fabric sync` (below) so it propagates cross-machine
   mkdirSync(layout.ptyRoot, { recursive: true });
   mkdirSync(layout.worktrees, { recursive: true });
   say("→ Recording the network config (convoy.toml)…");
@@ -592,6 +593,17 @@ export async function cmdInit(args: string[]): Promise<number> {
     err("→ next: check `st`/`pty` are on PATH and the bus works — run `convoy doctor --quick`.");
     return 1;
   }
+  // Declare the catalog to fabric's `fabric sync` so it propagates cross-machine — a `host=B` agent file
+  // dropped here reaches B, whose `convoy up` launches it (the declarative scheduler). fabric owns the
+  // transport (an always-on daemon); convoy just writes the `[[sync]]` entry. Version-gated + best-effort:
+  // an absent/pre-sync fabric WARNS (single-machine still works), never fails init.
+  say("→ Declaring the catalog to fabric sync (cross-machine propagation)…");
+  {
+    const d = await declareCatalogSync(dir);
+    if (d.declared) say(`   ✓ declared "${d.name}" → fabric sync (union / newer-wins / no-delete); drop a host=<box> agent file and it runs on that box`);
+    else say(`   • skipped: ${d.reason}`);
+  }
+
   say("→ Installing personas…");
   try {
     const res = await ensureInstalled((s) => say(`   ${s}`));

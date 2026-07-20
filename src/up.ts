@@ -23,6 +23,7 @@ import { HostLock } from "./host-lock.ts";
 import { commandHashOf, gone, isPermanent, logicalId, processAlive, PtyHost, type SupervisedSession } from "./host.ts";
 import { agentBusId, readCatalog, reconcilePlan } from "./reconcile.ts";
 import { agentFileToSpec, catalogDir } from "./agent-file.ts";
+import { declareCatalogSync } from "./fabric-sync.ts";
 import { nativeLaunch } from "./launch.ts";
 import { shortHostname } from "./agent-spec.ts";
 
@@ -185,6 +186,23 @@ export async function up(opts: UpOptions): Promise<number> {
     { type: "up", network: root, reconcileInterval: interval },
     `hosting ${root} (reconcile every ${interval}s, cap ${effectiveLimit(null, cliLimit)} fails / ${effectiveWindow(null, cliWindow)}s)`,
   );
+
+  // Declare this host's catalog to fabric sync so it both PUBLISHES its declarations and RECEIVES peers' — the
+  // cross-machine scheduler: a `host=<this-box>` agent file dropped anywhere on the fleet lands in this catalog
+  // and the reconcile below launches it. fabric owns the always-on sync daemon; convoy just writes the (idempotent)
+  // `[[sync]]` entry. Ensure the catalog dir exists first so fabric has a folder to watch (and reconcile a target
+  // to read). Version-gated + best-effort: an absent/pre-sync fabric WARNS — the host still reconciles its LOCAL
+  // catalog, just without cross-machine propagation — and never blocks the bring-up.
+  mkdirSync(catalogDir(root), { recursive: true });
+  {
+    const d = await declareCatalogSync(root);
+    emit(
+      { type: "catalog_sync", network: root, declared: d.declared, name: d.name, ...(d.reason ? { reason: d.reason } : {}) },
+      d.declared
+        ? `[convoy-up] declared catalog "${d.name}" to fabric sync — cross-machine propagation on (drop a host=<box> agent file, it runs on that box)`
+        : `[convoy-up] catalog NOT declared to fabric sync — ${d.reason}`,
+    );
+  }
 
   // Up-scope batch pre-trust: mark every member's workspace trusted BEFORE the reconcile loop respawns any of
   // them, so an initial multi-session bring-up (all permanents gone) or a post-crash multi-respawn never races

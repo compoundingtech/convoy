@@ -5,8 +5,9 @@
 // drive this ONE function — up = reconcile on fs.watch(catalog/) + a timer; up --once = a single pass.
 //
 // This is what makes "declare on machine A, run on machine B" work: A writes catalog/<id>.toml with host=B,
-// the catalog syncs to B (smalltalk#97), and B's reconcile sees host==B + launches it. No RPC — the synced
-// folder IS the scheduler. Pure (no side effects) so it's unit-testable; up executes the plan.
+// `fabric sync` propagates the catalog file to B (convoy declares its catalog to fabric sync — see
+// src/fabric-sync.ts), and B's reconcile sees host==B + launches it. No RPC — the synced folder IS the
+// scheduler. Pure (no side effects) so it's unit-testable; up executes the plan.
 
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
