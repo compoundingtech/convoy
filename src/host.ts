@@ -118,6 +118,16 @@ export function workspaceOfPtyfile(ptyfile: string): string {
   return basename(d) === CONVOY_DIR ? dirname(d) : d;
 }
 
+/** The workspace whose MANIFEST owns this session — `<workspace>` recovered from its `ptyfile` tag. Null
+ *  when the session carries no manifest (e.g. a hand-spawned permanent session convoy never launched):
+ *  there is no launch spec to replay, so recovery falls back to the in-place restart. Sessions sharing a
+ *  workspace are LIMBS OF ONE AGENT — this is the key recovery groups on, so a provider and its ding
+ *  sidecar are replayed together exactly once. */
+export function manifestWorkspace(s: SupervisedSession): string | null {
+  const pf = s.tags["ptyfile"];
+  return pf ? workspaceOfPtyfile(pf) : null;
+}
+
 /** A stable, human-readable logical id — `<agent-dir>/<session-key>` (e.g. `convoy/claude`) from the
  *  persistent ptyfile tags; survives respawns + `pty kill`. Falls back to the pty id. */
 export function logicalId(s: SupervisedSession): string {
@@ -170,5 +180,34 @@ export class PtyHost {
    *  PTY_ROOT is already pinned in the process env by the constructor. */
   async kill(name: string): Promise<boolean> {
     return (await run("pty", ["kill", name])).ok;
+  }
+
+  /** REPLAY an agent's manifest — the recovery primitive (convoy#82). `respawn` above cannot serve this
+   *  case, for two independent reasons found by reproducing a provider death:
+   *
+   *    1. `pty restart` REFUSES agent-shaped sessions. pty's stateful-agent guard rejects any session
+   *       tagged `role=agent` unless `--force`, and its own message points the operator at the
+   *       supervisor: "Cycle it through its supervisor (e.g. `convoy up`) instead." convoy up's respawn
+   *       WAS `pty restart -y`, so the two sides deadlocked — pty deferred to convoy, convoy called the
+   *       refused command, and every permanent agent respawn failed. The guard is RIGHT (blindly
+   *       re-running stored argv can wedge a `claude --resume`); convoy was using the wrong primitive.
+   *    2. After a HARD death there is no daemon left to restart at all — nothing to `restart` onto.
+   *
+   *  Replay is what the guard defers to: not a blind argv re-run, but a fresh COLD BOOT from
+   *  `.convoy/pty.toml` — the launch spec. It re-reads the manifest and spawns the agent's whole limb set
+   *  from it, so the agent comes back running its declared boot ritual with no conversation pinned.
+   *
+   *  ALL limbs are relaunched together, and surviving ones are killed FIRST. The manifest pins stable
+   *  session ids (`<prefix>` / `<prefix>.ding`), so spawning over a live sidecar would collide on that id;
+   *  worse, a reused sidecar stays bound to the provider that just died. Tearing both down and replaying
+   *  the manifest is the only state that is simple to reason about: whatever the manifest says, is what
+   *  runs. */
+  async replayManifest(workspace: string, survivors: readonly SupervisedSession[]): Promise<{ spawned: string[]; failed: string[] }> {
+    for (const s of survivors) await this.kill(s.name);
+    try {
+      return await spawnFromPtyFile(workspace, this.root);
+    } catch {
+      return { spawned: [], failed: ["<manifest unreadable>"] }; // a missing/corrupt pty.toml is a failed attempt, not a crash
+    }
   }
 }
