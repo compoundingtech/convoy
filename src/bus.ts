@@ -1,9 +1,9 @@
-// The smalltalk bus (members / status). Reads via @myobie/coord's read-only `createBusReader` — the
+// The smalltalk bus (members / status). Reads via @compoundingtech/smalltalk's read-only `createBusReader` — the
 // in-process bus reader smalltalk exports — instead of spawning `st agents` and parsing its JSON.
 // Same data, no subprocess, type-safe. The reader is pinned to an explicit state root (see
 // `effectiveRoot`); writes (`setStatus`) still go through the `st` CLI, which is env-pinned.
 
-import { createBusReader } from "@myobie/coord";
+import { createBusReader } from "@compoundingtech/smalltalk";
 import { run } from "./exec.ts";
 import { defaultConvoyNetwork, stRootOf } from "./paths.ts";
 

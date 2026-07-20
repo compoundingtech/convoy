@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { SessionInfo } from "@myobie/pty/client";
+import type { SessionInfo } from "@compoundingtech/pty/client";
 import { commandFingerprint } from "./flapping-cap.ts";
 import { commandHashOf, gone, isPermanent, logicalId, processAlive, toSupervised } from "./host.ts";
 

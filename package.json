@@ -1,5 +1,5 @@
 {
-  "name": "@myobie/convoy",
+  "name": "@compoundingtech/convoy",
   "version": "0.2.0-ts.0",
   "description": "convoy — the single front door to a smalltalk agent network (TypeScript port; see notes/TS-PORT-PLAN.md)",
   "type": "module",
@@ -21,8 +21,8 @@
     "vitest": "^4.1.10"
   },
   "dependencies": {
-    "@myobie/coord": "file:../smalltalk",
-    "@myobie/pty": "file:../pty",
+    "@compoundingtech/smalltalk": "file:../smalltalk",
+    "@compoundingtech/pty": "file:../pty",
     "smol-toml": "^1.7.0"
   }
 }

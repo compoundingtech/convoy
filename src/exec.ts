@@ -1,5 +1,5 @@
 // A thin promise wrapper around child_process for the few tools convoy still shells (`st`, `git`).
-// Most pty interaction is native via @myobie/pty/client (src/host.ts); this is the residual seam.
+// Most pty interaction is native via @compoundingtech/pty/client (src/host.ts); this is the residual seam.
 
 import { execFile, execFileSync } from "node:child_process";
 import { homedir } from "node:os";

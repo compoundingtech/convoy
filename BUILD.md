@@ -8,7 +8,7 @@ smalltalk), so `bin/convoy` runs the sources directly.
 
 - Node ≥ 23.6 (`node --version`) — for native `.ts` type-stripping
 - `st` (smalltalk) + `pty` on PATH — the tools convoy orchestrates
-- the sibling `../pty` and `../smalltalk` repos checked out — convoy depends on `@myobie/pty`
+- the sibling `../pty` and `../smalltalk` repos checked out — convoy depends on `@compoundingtech/pty`
   locally (`file:../pty`) and references smalltalk's hook scripts by path
 - macOS (agents run in a TCC-granted terminal)
 
