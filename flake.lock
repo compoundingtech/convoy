@@ -75,16 +75,15 @@
         ]
       },
       "locked": {
-        "lastModified": 1784561255,
-        "narHash": "sha256-3B8EyQiGtem0wCbZfF+UE370CiCuGoK1kjvrnNlqB64=",
+        "lastModified": 1784579512,
+        "narHash": "sha256-S6qyeLfTRXgPt0PF7ZCEEuEm0k1dvAeDa54mdEAzKSg=",
         "owner": "compoundingtech",
         "repo": "smalltalk",
-        "rev": "a598a5e86f33570e90623d5205b634ee96293ad7",
+        "rev": "ec24ac4677e67216de75a8cb7de819a55cde3233",
         "type": "github"
       },
       "original": {
         "owner": "compoundingtech",
-        "ref": "schickling-assistant/2026-07-20-nix-flake",
         "repo": "smalltalk",
         "type": "github"
       }

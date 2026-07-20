@@ -8,9 +8,7 @@
     pty.url = "github:compoundingtech/pty";
     pty.inputs.nixpkgs.follows = "nixpkgs";
 
-    # TODO: repoint to `github:compoundingtech/smalltalk` once compoundingtech/smalltalk#104 (which
-    # adds smalltalk's flake) merges — that branch is the only place the flake exists today.
-    smalltalk.url = "github:compoundingtech/smalltalk/schickling-assistant/2026-07-20-nix-flake";
+    smalltalk.url = "github:compoundingtech/smalltalk";
     smalltalk.inputs.nixpkgs.follows = "nixpkgs";
     smalltalk.inputs.flake-utils.follows = "flake-utils";
     # One pty in the closure: convoy links the same build smalltalk was built against.
