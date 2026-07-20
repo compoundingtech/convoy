@@ -14,6 +14,7 @@ import { busAgentId, resolvedPersonaPath, sessionId, specPermanent, specPermissi
 import type { Role } from "./role.ts";
 import { pretrustDir, pretrustDirsCodex } from "./trust.ts";
 import { CONVOY_DIR, networkLayout, stRootOf } from "./paths.ts";
+import { counterContextRefusal } from "./identity.ts";
 
 // The pty session key is per-harness: claude → [sessions.claude], codex → [sessions.codex]. (Before,
 // this was hardcoded "claude", so `--harness codex` silently wrote a claude session — a false-harness
@@ -134,6 +135,27 @@ export function harnessCommand(harness: Harness, permissionMode: string, prompt:
 export function dingCommand(busId: string, claudeSessionId: string, root?: string | null): string {
   const rootFlag = root ? ` --root ${root}` : "";
   return `st ding ${claudeSessionId} --identity ${busId}${rootFlag}`;
+}
+
+/** Provision the agent's DURABLE CONTEXT dir (`<member>/context/`) — unless the identity is a counter.
+ *
+ *  `context/now.md` is the memory a cold-booted agent reconstructs itself from, so it is only safe when
+ *  the name that addresses it means ONE agent for as long as the file exists. A `<role>-<n>` counter does
+ *  not: it re-derives per parent lifetime, so after a restart `worker-2` names a different agent and would
+ *  read its predecessor's now.md as its own memory — and act on it. That failure is silent and arrives
+ *  weeks after the naming choice, which is exactly the kind a warning does not prevent.
+ *
+ *  So the dir is REFUSED rather than warned about, and the refusal is narrow: the agent still launches and
+ *  still gets a bus folder, it just has no durable context to misattribute. Returns the refusal message
+ *  when it declined, else null. */
+export function provisionContext(memberDir: string, identity: string): string | null {
+  const refusal = counterContextRefusal(identity);
+  if (refusal !== null) {
+    process.stderr.write(`convoy: ${refusal}\n`);
+    return refusal;
+  }
+  mkdirSync(join(memberDir, "context", "decisions"), { recursive: true });
+  return null;
 }
 
 /** Serialize the per-agent pty.toml (pty's manifest format — NOT a convoy.toml). Pins the session ids
@@ -377,6 +399,7 @@ export async function nativeLaunch(spec: AgentSpec): Promise<{ spawned: string[]
     const member = join(stRootOf(spec.networkRoot), busAgentId(spec));
     mkdirSync(join(member, "inbox"), { recursive: true });
     mkdirSync(join(member, "archive"), { recursive: true });
+    provisionContext(member, spec.identity);
 
     // Give the agent's workspace a home under the network's worktrees/ — a single view of everything the
     // network is working on. With no megarepo, that's a SYMLINK to the agent's repo. Best-effort +
