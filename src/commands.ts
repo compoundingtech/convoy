@@ -30,7 +30,6 @@ import { structureChecks } from "./doctor/structure.ts";
 import { baseFile, ensureInstalled, personasDir, personasInstalled } from "./personas.ts";
 import { ROLES, parseRole } from "./role.ts";
 import { adHocNotice, generateAdHocIdentity, validateRunIdentity } from "./run.ts";
-import { readCatalog } from "./reconcile.ts";
 import { busAgentId, isValidModel, preflight, resolvedPersonaPath, shortHostname, type AgentSpec, type Harness, type Transport } from "./agent-spec.ts";
 import { claudeConfigPath, codexConfigPath, pretrustDirs, pretrustDirsCodex } from "./trust.ts";
 
@@ -972,6 +971,10 @@ export async function cmdRun(args: string[]): Promise<number> {
     identity,
     transport,
     networkRoot: network,
+    // An ad-hoc session declares no launcher override and no extra environment:
+    // it is the runnable core, so it takes the harness and the network as-is.
+    bin: null,
+    env: {},
     personaOverride: optValue(args, "--persona"),
     workingDir,
     permanentOverride: false, // never respawned — see the doc comment above
