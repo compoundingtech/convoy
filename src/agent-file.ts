@@ -37,8 +37,16 @@ export interface AgentFile {
   transport?: Transport;
   /** Optional persona override (a path). Omit → the role's default persona. */
   persona?: string;
-  /** Optional supervision strategy — "permanent" (respawned by `convoy up`, piece 3). Omit → derive from role. */
-  strategy?: "permanent";
+  /** Optional supervision strategy:
+   *   - "permanent" — respawned by `convoy up` (the CoS + supervisors; the always-on tier).
+   *   - "batch"     — a ONE-SHOT job: runs → signals done (`convoy job done`) → EXITS, and is NEVER
+   *                   respawned. This is the BATCH side of convoy (an eval run, a one-shot task). It's
+   *                   non-permanent (so the crash/respawn loop already leaves it alone) AND, once its
+   *                   completion event exists, reconcile does NOT re-launch it from the catalog either
+   *                   (see reconcile.ts) — so a persistent `convoy up` won't resurrect a finished job.
+   *  Omit → derive from role. A batch job is distinct from a plain ephemeral worker only in that intent is
+   *  DECLARED (so tooling can wait on its completion) and reconcile treats "done" as terminal. */
+  strategy?: "permanent" | "batch";
   /** Lifecycle marker: `retired = true` DECOMMISSIONS the agent. Because the catalog is synced by `fabric sync`
    *  under the UNION / no-delete "catalog" policy (a local `rm` just re-propagates from a peer), removal is an
    *  EDIT, not a file delete — `convoy remove` sets retired=true and the sync carries it (newer-wins) everywhere;
@@ -147,7 +155,7 @@ export function parseAgentFile(text: string, format: SpecFormat = "toml", idCont
   const transportRaw = str("transport");
   if (transportRaw !== undefined && transportRaw !== "ding" && transportRaw !== "mcp") throw new Error(`invalid \`transport\` "${transportRaw}" (want: ding | mcp)`);
   const strategyRaw = str("strategy");
-  if (strategyRaw !== undefined && strategyRaw !== "permanent") throw new Error(`invalid \`strategy\` "${strategyRaw}" (want: permanent, or omit)`);
+  if (strategyRaw !== undefined && strategyRaw !== "permanent" && strategyRaw !== "batch") throw new Error(`invalid \`strategy\` "${strategyRaw}" (want: permanent | batch, or omit)`);
   const modelRaw = str("model");
   if (modelRaw !== undefined && !isValidModel(modelRaw)) throw new Error(`invalid \`model\` "${modelRaw}" — use letters, digits, and . _ : / - (start alphanumeric), e.g. claude-fable-5`);
 
@@ -165,7 +173,7 @@ export function parseAgentFile(text: string, format: SpecFormat = "toml", idCont
   if (transportRaw) af.transport = transportRaw as Transport;
   const persona = str("persona");
   if (persona) af.persona = persona;
-  if (strategyRaw) af.strategy = "permanent";
+  if (strategyRaw) af.strategy = strategyRaw as "permanent" | "batch";
   const tier = str("tier");
   if (tier) af.tier = tier;
   if (doc["retired"] === true) af.retired = true;
@@ -308,7 +316,7 @@ export function agentFileToSpec(af: AgentFile, opts: { networkRoot: string | nul
     networkRoot: opts.networkRoot,
     personaOverride: af.persona ?? null,
     workingDir: opts.workspace ?? af.workspace ?? null,
-    permanentOverride: af.strategy === "permanent" ? true : null,
+    permanentOverride: af.strategy === "permanent" ? true : af.strategy === "batch" ? false : null,
     prefix: af.prefix ?? af.host ?? null,
     // `env` is the GENERAL credential seam (decision 0004) and is carried verbatim below; `configDir` is
     // the narrower projection of it that the imperative CLI (`--config-dir`) and pre-trust both need as a
@@ -336,4 +344,5 @@ transport = "ding"              # ding | mcp       (default: ding)
 # model = "claude-fable-5"             # optional — per-agent model (claude/codex --model); omit → harness default
 # persona = "/abs/path/to/persona.md"  # optional — omit to use the role's default persona
 # strategy = "permanent"               # optional — respawned by convoy up (piece 3); omit → derive from role
+#                                      #   "batch" = a one-shot job: runs → convoy job done → EXITS, never respawned
 `;

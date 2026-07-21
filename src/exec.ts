@@ -61,6 +61,10 @@ export function run(
       },
     );
     if (opts.input !== undefined && child.stdin) {
+      // A child that exits/closes stdin before reading (e.g. a tool that errors early) makes this write emit
+      // an async EPIPE — unhandled, it crashes the process (surfaced as a flaky uncaught error under vitest's
+      // parallel test files). Swallow it: execFile's callback already reports the real exit status/stderr.
+      child.stdin.on("error", () => {});
       child.stdin.write(opts.input);
       child.stdin.end();
     }

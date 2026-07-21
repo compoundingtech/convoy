@@ -33,6 +33,10 @@ export interface ReconcilePlan {
   /** Active, THIS host, running + alive → adopt (leave it — the adopt-alive path, incl. a transiently-"gone"
    *  session whose pid is still alive). */
   adopt: { entry: CatalogEntry; sessions: SupervisedSession[] }[];
+  /** A `strategy="batch"` (one-shot) job that has ALREADY RUN + is no longer running → terminal: NOT
+   *  relaunched. Without this, a persistent `convoy up` re-launches a finished batch job the moment its
+   *  exited session is GC'd (the catalog still lists it active) — resurrecting a one-shot job. */
+  done: CatalogEntry[];
   /** host != THIS machine → skipped (another machine's `convoy up` launches it once the catalog syncs there). */
   otherHost: CatalogEntry[];
 }
@@ -45,6 +49,10 @@ export function reconcilePlan(
   sessions: SupervisedSession[],
   thisHost: string,
   busIdOf: (s: SupervisedSession) => string | null,
+  /** Has this catalog entry's batch (one-shot) job already run to completion? Injected (keeps this module
+   *  free of an fs dep) — `convoy up` passes a ran-marker probe; defaults to "never run" so non-batch
+   *  reconciles + existing callers/tests are unaffected. Only consulted for `strategy="batch"` entries. */
+  isDone: (entry: CatalogEntry) => boolean = () => false,
 ): ReconcilePlan {
   const byBusId = new Map<string, SupervisedSession[]>();
   for (const s of sessions) {
@@ -56,7 +64,7 @@ export function reconcilePlan(
   }
   const liveOf = (id: string): SupervisedSession[] => (byBusId.get(id) ?? []).filter((s) => !gone(s) || processAlive(s.pid));
 
-  const plan: ReconcilePlan = { launch: [], teardown: [], adopt: [], otherHost: [] };
+  const plan: ReconcilePlan = { launch: [], teardown: [], adopt: [], done: [], otherHost: [] };
   for (const entry of entries) {
     const host = entry.af.host ?? thisHost;
     if (host !== thisHost) {
@@ -69,6 +77,7 @@ export function reconcilePlan(
       continue; // retired + not running → nothing to do
     }
     if (live.length > 0) plan.adopt.push({ entry, sessions: live });
+    else if (entry.af.strategy === "batch" && isDone(entry)) plan.done.push(entry); // finished one-shot job → terminal, don't relaunch
     else plan.launch.push(entry);
   }
   return plan;

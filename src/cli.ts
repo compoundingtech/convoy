@@ -4,8 +4,9 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { down, up, type DownOptions, type UpOptions } from "./up.ts";
-import { cmdAdd, cmdApp, cmdCos, cmdDoctor, cmdEnv, cmdInit, cmdInstallCli, cmdLs, cmdPersonas, cmdPretrust, cmdReload, cmdRemove, cmdRename, cmdRender, cmdRun, cmdShell, hasFlag, optValue, positionals, unknownFlag } from "./commands.ts";
+import { cmdAdd, cmdApp, cmdCos, cmdDoctor, cmdEnv, cmdInit, cmdInstallCli, cmdJob, cmdLs, cmdPersonas, cmdPretrust, cmdReload, cmdRemove, cmdRename, cmdRender, cmdRun, cmdShell, hasFlag, optValue, positionals, unknownFlag } from "./commands.ts";
 import { cmdCompletions } from "./completions.ts";
+import { cmdEval } from "./eval.ts";
 import { flagAllowList } from "./command-table.ts";
 import { run } from "./exec.ts";
 
@@ -49,8 +50,11 @@ export async function main(argv: string[]): Promise<void> {
   const rest = argv.slice(1);
 
   // --help footgun: `convoy add --help` (etc.) must show help, never fall through to running the
-  // command (which would error on the missing required args). Handle it for every subcommand.
-  if (cmd !== undefined && cmd !== "--version" && (rest.includes("--help") || rest.includes("-h"))) {
+  // command (which would error on the missing required args). Handle it for every subcommand — EXCEPT the
+  // ones that print their own detailed per-command help (eval/job have the richest flag sets), which handle
+  // `--help` in their own handler.
+  const selfHelp = new Set(["eval", "job"]);
+  if (cmd !== undefined && cmd !== "--version" && !selfHelp.has(cmd) && (rest.includes("--help") || rest.includes("-h"))) {
     printHelp();
     process.exit(0);
   }
@@ -68,6 +72,8 @@ export async function main(argv: string[]): Promise<void> {
     case "remove": code = await cmdRemove(rest); break;
     case "rename": code = await cmdRename(rest); break;
     case "reload": code = await cmdReload(rest); break;
+    case "job": code = await cmdJob(rest); break;
+    case "eval": code = await cmdEval(rest); break;
     case "pretrust": code = await cmdPretrust(rest); break;
     case "install-cli": code = await cmdInstallCli(rest); break;
     case "cos": code = await cmdCos(rest); break;
@@ -142,6 +148,8 @@ function printHelp(): void {
       "  shell [network] open an interactive subshell with a network's env exported (pty ls / st just work); exit to leave [--identity <id>]\n" +
       "  remove <id>    remove an agent\n" +
       "  rename <old> <new>  rename an agent — moves the catalog entry AND the durable bus folder (context/, inbox/, archive/, status), leaving a redirect tombstone [--dry-run --network --host]\n" +
+      "  eval <cell>    run a batch/eval cell end-to-end (spin → wait for the done-signal → grade) → machine verdict JSON [--sandbox --network --job --timeout --keep --json]\n" +
+      "  job done       signal a batch job complete — the completion event `convoy eval` waits on [--status ok|fail --job <id> --message <t> --network]; `job status` reads it back\n" +
       "  reload <id>    re-materialize an agent from its pty.toml, healing the ding to carry --root (kill + respawn) [--dry-run --write-only]\n" +
       "  pretrust <dir>... batch pre-trust agent dirs before spawning many back-to-back (avoids the trust race) [--config-dir]\n" +
       "  install-cli    symlink convoy + st + pty onto PATH (default ~/.local/bin) — reliable, no npm link [--bin <dir>]\n" +

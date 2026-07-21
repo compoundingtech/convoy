@@ -1,0 +1,25 @@
+# Example eval cell — the reference for the `convoy eval` contract (convoy eval Phase 1).
+#
+# A "cell" is a self-contained batch job: a fixture that spins up work, the work signals DONE, and a grader
+# renders a verdict. `convoy eval <this-dir>` runs it end-to-end (spin → wait for the done-signal → grade)
+# and emits a machine verdict JSON. This example is DETERMINISTIC (no LLM, no real pty) so it always runs;
+# a REAL team cell (e.g. a supervisor + worker over convoy) maps onto the exact same contract — see README.md.
+
+id    = "example-eval-cell"
+title = "The minimal convoy eval cell: do a unit of work, signal done, grade the artifact"
+axes  = ["task-success"]
+
+evaluates = """
+The smallest thing that exercises the whole convoy eval pipe: fixture/spin.sh does a unit of work and calls
+`convoy job done` (the completion event), and fixture/grade.sh inspects the result and exits 0/nonzero. The
+orchestrator waits for the done-signal (with a timeout fallback), runs the grader, and turns its
+[PASS]/[FAIL] rows + exit code into the verdict. No human has to watch the bus for "settled".
+"""
+
+# The contract the orchestrator hands each script (env + argv):
+#   $1 / $EVAL_SANDBOX   a scratch dir for this run's artifacts
+#   $CONVOY_NETWORK      the isolated convoy network dir (use this for convoy add / up / down)
+#   $ST_ROOT             the bus root (<net>/smalltalk) — where agent inboxes live
+#   $CONVOY_BIN          an absolute path to the convoy CLI (call `"$CONVOY_BIN" job done ...`)
+[grader]
+task_success = "the sandbox artifact LICENSE.txt is the string MIT (written by spin's unit of work)"

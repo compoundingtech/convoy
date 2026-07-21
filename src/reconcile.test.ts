@@ -74,7 +74,36 @@ describe("reconcilePlan — desired (catalog) vs actual (sessions), host-filtere
   it("retired + NOT running → no-op (not in any action list)", () => {
     const a = entry({ identity: "wk", role: "worker", retired: true });
     const plan = reconcilePlan([a], [], thisHost, resolve);
-    expect(plan).toEqual({ launch: [], teardown: [], adopt: [], otherHost: [] });
+    expect(plan).toEqual({ launch: [], teardown: [], adopt: [], done: [], otherHost: [] });
+  });
+
+  it("BATCH not-yet-run: a batch job with no session + not-yet-done → still launches (first run)", () => {
+    const a = entry({ identity: "job1", role: "worker", strategy: "batch" });
+    const plan = reconcilePlan([a], [], thisHost, resolve, () => false);
+    expect(plan.launch).toEqual([a]);
+    expect(plan.done).toEqual([]);
+  });
+
+  it("BATCH one-shot: a batch job that ALREADY RAN + no live session → done bucket, NOT relaunched", () => {
+    const a = entry({ identity: "job1", role: "worker", strategy: "batch" });
+    const plan = reconcilePlan([a], [], thisHost, resolve, (e) => e.af.identity === "job1");
+    expect(plan.done).toEqual([a]);
+    expect(plan.launch).toEqual([]); // the resurrection bug: without the guard this would relaunch the finished job
+  });
+
+  it("BATCH still running: adopt wins over the done guard (a running batch job is left alone, not re-run)", () => {
+    const a = entry({ identity: "job1", role: "worker", strategy: "batch" });
+    const plan = reconcilePlan([a], [sess("silber.job1")], thisHost, resolve, () => true);
+    expect(plan.adopt.map((x) => x.entry)).toEqual([a]);
+    expect(plan.done).toEqual([]);
+    expect(plan.launch).toEqual([]);
+  });
+
+  it("BATCH guard is batch-only: a non-batch agent that 'ran' still relaunches (guard never fires for it)", () => {
+    const a = entry({ identity: "wk", role: "worker", strategy: "permanent" });
+    const plan = reconcilePlan([a], [], thisHost, resolve, () => true); // isDone true, but not a batch job
+    expect(plan.launch).toEqual([a]);
+    expect(plan.done).toEqual([]);
   });
 
   it("ACCEPTANCE (cos's E2E shape): 2 this-host agents + 1 other-host → launch both mine, skip the other", () => {

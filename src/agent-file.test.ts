@@ -45,6 +45,12 @@ strategy  = "permanent"
     expect(() => parseAgentFile(`identity="w"\nrole="worker"\nstrategy="ephemeral"\n`)).toThrow(/strategy/);
   });
 
+  it("parses + round-trips the batch (one-shot job) strategy", () => {
+    const af = parseAgentFile(`identity="job1"\nrole="worker"\nstrategy="batch"\n`);
+    expect(af.strategy).toBe("batch");
+    expect(parseAgentFile(agentFileToToml(af))).toEqual(af); // write → read round-trips
+  });
+
   it("keeps forward-compat fields (tier, env) without materializing them", () => {
     const af = parseAgentFile(`identity="w"\nrole="chief-of-staff"\ntier="cos"\n[env]\nFOO="bar"\n`);
     expect(af.tier).toBe("cos");
@@ -89,6 +95,12 @@ describe("agentFileToSpec — compile intent → AgentSpec", () => {
     expect(s.prefix).toBe("boxb");
     expect(s.personaOverride).toBe("/p.md");
     expect(s.permanentOverride).toBe(true);
+  });
+
+  it("strategy=batch → permanentOverride=false (a one-shot job is NEVER permanent, regardless of role)", () => {
+    expect(agentFileToSpec({ ...base, strategy: "batch" }, { networkRoot: "/net" }).permanentOverride).toBe(false);
+    // even a supervisor-role batch job is non-permanent (the job type wins over the role's default)
+    expect(agentFileToSpec({ identity: "s", role: "supervisor", strategy: "batch" }, { networkRoot: null }).permanentOverride).toBe(false);
   });
 
   it("workspace: the --dir override wins over the file's workspace", () => {
