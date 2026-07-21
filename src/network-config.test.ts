@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,6 +30,23 @@ describe("network-config (<net>/convoy.toml)", () => {
 
     writeNetworkConfig(d, { name: "big", megarepo: "/repos/mono" });
     expect(readNetworkConfig(d)).toEqual({ name: "big", megarepo: "/repos/mono" });
+  });
+
+  it("write + read round-trips the ding service; an invalid value is ignored (falls back to node default)", () => {
+    const d = tmp();
+    // unset → absent from the parsed config (callers treat undefined as node `st ding`).
+    writeNetworkConfig(d, { name: "default" });
+    expect(readNetworkConfig(d)).toEqual({ name: "default" });
+
+    // node + rust both round-trip.
+    writeNetworkConfig(d, { name: "default", ding: "node" });
+    expect(readNetworkConfig(d)).toEqual({ name: "default", ding: "node" });
+    writeNetworkConfig(d, { name: "ournet", ding: "rust" });
+    expect(readNetworkConfig(d)).toEqual({ name: "ournet", ding: "rust" });
+
+    // a hand-edited garbage value is dropped (not surfaced as a bogus DingService).
+    writeFileSync(networkConfigPath(d), 'name = "x"\nding = "banana"\n');
+    expect(readNetworkConfig(d)).toEqual({ name: "x" });
   });
 
   it("read is null when the file is missing or nameless", () => {
