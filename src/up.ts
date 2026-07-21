@@ -27,6 +27,7 @@ import { agentFileToSpec, catalogDir } from "./agent-file.ts";
 import { declareCatalogSync } from "./fabric-sync.ts";
 import { nativeLaunch } from "./launch.ts";
 import { shortHostname } from "./agent-spec.ts";
+import { batchHasRun, markBatchRan } from "./job.ts";
 
 export interface UpOptions {
   network?: string | undefined;
@@ -375,7 +376,8 @@ export async function up(opts: UpOptions): Promise<number> {
     const { entries, errors } = readCatalog(root);
     for (const e of errors) emit({ type: "catalog_error", path: e.path, error: e.error, ts: isoString(now) }, `[convoy-up] skipping malformed agent file ${e.path}: ${e.error}`);
     const catalogSessions = await host.sessions();
-    const plan = reconcilePlan(entries, catalogSessions, thisHost, busIdOf);
+    const plan = reconcilePlan(entries, catalogSessions, thisHost, busIdOf, (e) => batchHasRun(root, e.af.identity));
+    for (const e of plan.done) emit({ type: "batch_done", identity: e.af.identity, ts: isoString(now) }, `[convoy-up] batch job ${e.af.identity} already ran — one-shot, not relaunching`);
     const retiredBusIds = new Set<string>(entries.filter((e) => e.af.retired && (e.af.host ?? thisHost) === thisHost).map((e) => agentBusId(e.af, thisHost)));
     for (const t of plan.teardown) {
       for (const s of t.sessions) await host.kill(s.name);
@@ -388,6 +390,8 @@ export async function up(opts: UpOptions): Promise<number> {
       const { spawned, failed } = await nativeLaunch(agentFileToSpec(e.af, { networkRoot: root }));
       if (spawned.length > 0) results.spawned++;
       else results.failed++;
+      if (e.af.strategy === "batch" && spawned.length > 0) markBatchRan(root, e.af.identity); // one-shot: never relaunch after this run
+
       emit({ type: "launch", identity: e.af.identity, host: thisHost, spawned, failed, ts: isoString(now) }, `[convoy-up] launch ${e.af.identity} (host ${thisHost}) — ${spawned.length} session(s)${failed.length ? ` (${failed.length} FAILED)` : ""}`);
     }
 

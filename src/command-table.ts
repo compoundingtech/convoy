@@ -197,6 +197,32 @@ export const COMMANDS: readonly CommandSpec[] = [
     positional: NETWORK_POSITIONAL,
   },
   {
+    name: "eval",
+    desc: "Run a batch/eval cell end-to-end (spin → wait for the done-signal → grade) → machine verdict",
+    flags: [
+      { name: "sandbox", desc: "Sandbox dir the cell spins in (default: a temp dir)", kind: "value", takesPath: true },
+      NETWORK_FLAG,
+      { name: "job", desc: "Job id whose completion event to wait on", kind: "value" },
+      { name: "timeout", desc: "Max wait for the done-signal (ms)", kind: "value" },
+      { name: "poll", desc: "Completion-event poll interval (ms)", kind: "value" },
+      { name: "keep", desc: "Keep the sandbox network after grading", kind: "bool" },
+      JSON_FLAG,
+    ],
+    positional: { desc: "Eval cell (a dir with task.toml + fixture/)", takesPath: true },
+  },
+  {
+    name: "job",
+    desc: "Signal a batch job complete (done) or read the completion event back (status)",
+    flags: [
+      { name: "status", desc: "Self-reported job outcome", kind: "value", values: ["ok", "fail"] },
+      { name: "job", desc: "Job id within the network", kind: "value" },
+      { name: "message", desc: "Optional note surfaced in the verdict", kind: "value" },
+      NETWORK_FLAG,
+      JSON_FLAG,
+    ],
+    positional: { desc: "Verb", values: ["done", "status"] },
+  },
+  {
     name: "env",
     desc: "Print eval-safe exports for a network's env",
     flags: [IDENTITY_FLAG, NETWORK_FLAG],

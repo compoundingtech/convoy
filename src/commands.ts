@@ -33,6 +33,7 @@ import { adHocNotice, generateAdHocIdentity, validateRunIdentity } from "./run.t
 import { busAgentId, isValidModel, preflight, resolvedPersonaPath, shortHostname, type AgentSpec, type Transport } from "./agent-spec.ts";
 import { HARNESSES, HARNESS_SESSION_KEYS, HARNESS_SUFFIX_RE, harnessDescriptor, harnessesInPtyToml, harnessLimitations, isHarness, type Harness } from "./harness.ts";
 import { claudeConfigPath, codexConfigPath, pretrustDirs, pretrustDirsCodex } from "./trust.ts";
+import { DEFAULT_JOB_ID, completionPath, isValidJobId, readCompletion, writeCompletion, type JobStatus } from "./job.ts";
 
 // ---- arg helpers ----
 export function positionals(args: string[]): string[] {
@@ -48,7 +49,7 @@ export function positionals(args: string[]): string[] {
   }
   return out;
 }
-const BOOL_FLAGS = new Set(["--dry-run", "--yes", "-y", "--mcp", "--permanent", "--purge", "--json", "--live-only", "--no-channel", "--force", "--once", "--quiet"]);
+const BOOL_FLAGS = new Set(["--dry-run", "--yes", "-y", "--mcp", "--permanent", "--purge", "--json", "--live-only", "--no-channel", "--force", "--once", "--keep", "--quiet"]);
 /** Value of `--name` — supports both `--name value` and `--name=value` (the `=` form previously fell
  *  through and silently defaulted, e.g. `--harness=codex` → claude). */
 export function optValue(args: string[], name: string): string | null {
@@ -1268,6 +1269,72 @@ export async function cmdRemove(args: string[]): Promise<number> {
   else if (retired?.already) out(`  ${identity} was already retired=true`);
   for (const s of sessions) out((await host.kill(s.name)) ? `✓ stopped ${s.name}` : `• ${s.name} didn't stop cleanly (already exited?)`);
   out(`✓ ${identity} removed from the convoy.`);
+  return 0;
+}
+
+/** `convoy job <done|status> [--job <id>] [--status ok|fail] [--message <t>] [--network <net>]` — the
+ *  batch-job lifecycle verb. `done` writes the COMPLETION EVENT the eval orchestrator waits on: an agent
+ *  (a team cell's supervisor) calls `convoy job done --status ok` when the whole task is verified complete,
+ *  which replaces the human-watching-the-bus with a deterministic, machine-clean signal. `status` reads it
+ *  back (pending vs done) — for debugging + scripts. The network is resolved by convoy's ONE resolver, so
+ *  the file the agent writes is exactly the one the orchestrator polls (see src/job.ts). */
+export async function cmdJob(args: string[]): Promise<number> {
+  if (hasFlag(args, "--help", "-h")) {
+    out(
+      "convoy job <done|status> — the batch-job completion signal `convoy eval` waits on.\n\n" +
+        "  done                write the completion event (the job is finished)\n" +
+        "    --status ok|fail   the job's self-reported outcome (default: ok)\n" +
+        "    --message <text>   optional note (why ok/fail) — surfaced in the verdict\n" +
+        "  status                read the completion event back (rc=0 done, rc=1 pending)\n" +
+        "    --json              print the event (or {status:\"pending\"}) as JSON\n" +
+        "  --job <id>            job id within the network (default: \"" + DEFAULT_JOB_ID + "\")\n" +
+        "  --network <net>       the network (default: ambient ST_ROOT / convoy default)\n" +
+        "\nAn agent (a team cell's supervisor) calls `convoy job done --status ok` when the whole task is verified\n" +
+        "complete; the event lands at <net>/jobs/<job>.done.json, which `convoy eval` polls.",
+    );
+    return 0;
+  }
+  const sub = positionals(args)[0];
+  if (sub !== "done" && sub !== "status") {
+    err(`unknown \`convoy job\` subcommand ${sub ? `"${sub}"` : "(none)"}. Usage: convoy job done [--status ok|fail] | convoy job status`);
+    return 2;
+  }
+  const badFlag = unknownFlag(args, ...flagAllowList("job"));
+  if (badFlag) {
+    err(`unrecognized flag "${badFlag}" for \`convoy job\`. See \`convoy job --help\`.`);
+    return 2;
+  }
+  const network = resolveNetworkRoot(optValue(args, "--network"));
+  const job = optValue(args, "--job") ?? DEFAULT_JOB_ID;
+  if (!isValidJobId(job)) {
+    err(`invalid --job "${job}": use lowercase letters, digits, and . _ - (start alphanumeric)`);
+    return 2;
+  }
+
+  if (sub === "status") {
+    const ev = readCompletion(network, job);
+    if (hasFlag(args, "--json")) {
+      out(JSON.stringify(ev ?? { job, status: "pending" }));
+    } else if (ev) {
+      out(`job ${job}: DONE — status=${ev.status}${ev.by ? ` by ${ev.by}` : ""}${ev.message ? ` — ${ev.message}` : ""}`);
+      out(`  event: ${completionPath(network, job)}`);
+    } else {
+      out(`job ${job}: pending (no completion event at ${completionPath(network, job)})`);
+    }
+    return ev ? 0 : 1; // rc=1 = not-yet-done, so a script can `until convoy job status` poll
+  }
+
+  // done
+  const statusRaw = optValue(args, "--status") ?? "ok";
+  if (statusRaw !== "ok" && statusRaw !== "fail") {
+    err(`invalid --status "${statusRaw}" (want: ok | fail)`);
+    return 2;
+  }
+  const status: JobStatus = statusRaw;
+  const message = optValue(args, "--message") ?? undefined;
+  const by = process.env["ST_AGENT"] || undefined;
+  const path = writeCompletion(network, { job, status, message, by, ts: Date.now() });
+  out(`✓ convoy job ${job} done — status=${status}${by ? ` (by ${by})` : ""}. Wrote ${path}`);
   return 0;
 }
 
