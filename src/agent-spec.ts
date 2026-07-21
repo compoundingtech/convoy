@@ -5,13 +5,16 @@ import { existsSync, statSync } from "node:fs";
 import { hostname } from "node:os";
 import { baseFile } from "./personas.ts";
 import { permanentByRole, type PermissionMode, type Role } from "./role.ts";
+import { harnessDescriptor, type Harness } from "./harness.ts";
 
 // Closed enums as const ARRAYS with the type derived from them, so the CLI's `--transport`/`--harness`
 // completions can read the real list instead of retyping it (a type alone is not iterable at runtime).
 export const TRANSPORTS = ["ding", "mcp"] as const;
 export type Transport = (typeof TRANSPORTS)[number];
-export const HARNESSES = ["claude", "codex"] as const;
-export type Harness = (typeof HARNESSES)[number];
+// `Harness` and its capability table live in src/harness.ts — one record per harness, so adding one is a
+// data change that fails to typecheck until every field is decided. Re-exported here because this module
+// is the established import site for the spec vocabulary.
+export { HARNESSES, harnessDescriptor, isHarness, HARNESS_LIST, harnessLimitations, type Harness } from "./harness.ts";
 
 export interface AgentSpec {
   harness: Harness;
@@ -140,11 +143,11 @@ export function preflight(s: AgentSpec, existing: string[]): Preflight {
   if (s.workingDir !== null && !isDir(s.workingDir)) {
     errors.push(`working directory does not exist: ${s.workingDir}`);
   }
-  if (s.harness === "codex" && s.transport === "mcp") {
-    warnings.push("codex has no MCP transport — it always runs ding-mode; ignoring --transport mcp");
+  if (!harnessDescriptor(s.harness).supportsMcp && s.transport === "mcp") {
+    warnings.push(`${s.harness} has no MCP transport — it always runs ding-mode; ignoring --transport mcp`);
   }
 
-  const effectiveTransport: Transport = s.harness === "codex" ? "ding" : s.transport;
+  const effectiveTransport: Transport = harnessDescriptor(s.harness).supportsMcp ? s.transport : "ding";
   const derived: [string, string][] = [
     ["harness", s.harness],
     ["identity", s.identity],

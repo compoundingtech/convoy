@@ -56,7 +56,9 @@ const IDENTITY_FLAG: FlagSpec = { name: "identity", desc: "Agent identity", kind
 const HARNESS_FLAG: FlagSpec = { name: "harness", desc: "Coding-agent harness", kind: "value", values: HARNESSES };
 const TRANSPORT_FLAG: FlagSpec = { name: "transport", desc: "Bus transport", kind: "value", values: TRANSPORTS };
 const PERSONA_FLAG: FlagSpec = { name: "persona", desc: "Persona file", kind: "value", takesPath: true };
-const CONFIG_DIR_FLAG: FlagSpec = { name: "config-dir", desc: "CLAUDE_CONFIG_DIR for the session", kind: "value", takesPath: true };
+// Not "CLAUDE_CONFIG_DIR" — the flag names the HARNESS's own config-relocation dir (CLAUDE_CONFIG_DIR for
+// claude, CODEX_HOME for codex), which is how an account is selected (decision 0004).
+const CONFIG_DIR_FLAG: FlagSpec = { name: "config-dir", desc: "Config dir for the session (selects the account)", kind: "value", takesPath: true };
 
 const NETWORK_POSITIONAL: PositionalSpec = { desc: "Network", dynamic: "networks" };
 const IDENTITY_POSITIONAL: PositionalSpec = { desc: "Agent identity", dynamic: "identities" };
@@ -164,6 +166,10 @@ export const COMMANDS: readonly CommandSpec[] = [
       PERSONA_FLAG,
       { name: "prefix", desc: "Session-id prefix (default: short hostname)", kind: "value" },
       CONFIG_DIR_FLAG,
+      // `--bin` on the ad-hoc path too: a deployment that wraps its harness wraps it for ad-hoc sessions
+      // as well, and `convoy run` is the replacement for exactly those launcher aliases. Without it, the
+      // ad-hoc path is the one place a convoy session escapes the deployment's boundary.
+      { name: "bin", desc: "Run this in place of the bare harness binary", kind: "value", takesPath: true },
       DRY_RUN_FLAG,
       { name: "force", desc: "Overwrite a foreign pty.toml in the workspace", kind: "bool" },
     ],
