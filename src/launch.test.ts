@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bootPrompt, dingCommand, discoverSmalltalkDir, harnessCommand, regenerateDingRoot, writeAgentFiles, writeContextFiles, writePtyToml } from "./launch.ts";
 import type { AgentSpec } from "./agent-spec.ts";
+import { stRootOf } from "./paths.ts";
+import { writeNetworkConfig } from "./network-config.ts";
 
 describe("native launch command builders (cold-start boot-prompt)", () => {
   it("harnessCommand claude: exec claude with the mode + boot prompt, NO poker, NO --resume", () => {
@@ -59,6 +61,20 @@ describe("native launch command builders (cold-start boot-prompt)", () => {
     // no root → no flag (unchanged behavior; falls back to ST_ROOT env / install default)
     expect(dingCommand("convoy-claude", "silber.convoy", null)).toBe("st ding silber.convoy --identity convoy-claude");
   });
+
+  it("dingCommand: service='rust' swaps the binary to `ding` (identical args); 'node'/undefined → `st ding`", () => {
+    // rust ding = drop-in: same positional session-id, same --identity/--root — only the prefix changes.
+    expect(dingCommand("convoy-claude", "silber.convoy", "/net/smalltalk", "rust")).toBe(
+      "ding silber.convoy --identity convoy-claude --root /net/smalltalk",
+    );
+    // node + undefined both → `st ding` (the default; every existing user is unchanged).
+    expect(dingCommand("convoy-claude", "silber.convoy", "/net/smalltalk", "node")).toBe(
+      "st ding silber.convoy --identity convoy-claude --root /net/smalltalk",
+    );
+    expect(dingCommand("convoy-claude", "silber.convoy", "/net/smalltalk")).toBe(
+      "st ding silber.convoy --identity convoy-claude --root /net/smalltalk",
+    );
+  });
 });
 
 describe("writePtyToml (pinned hostname-prefixed ids, cold start)", () => {
@@ -108,6 +124,29 @@ describe("writePtyToml (pinned hostname-prefixed ids, cold start)", () => {
       // env carries ST_ROOT = the bus root (<net>/smalltalk), not the network dir
       expect(toml).toContain('ST_ROOT = "/net/convoy/smalltalk"');
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("network convoy.toml ding='rust' bakes the rust `ding` binary into the sidecar; default → node `st ding`", () => {
+    const net = mkdtempSync(join(tmpdir(), "convoy-ding-net-"));
+    const dir = mkdtempSync(join(tmpdir(), "convoy-ptytoml-ding-"));
+    try {
+      // default (network has no `ding` recorded) → node st ding, unchanged.
+      writeNetworkConfig(net, { name: "ournet" });
+      writePtyToml(dir, spec({ networkRoot: net }));
+      expect(readFileSync(join(dir, ".convoy", "pty.toml"), "utf8")).toContain(
+        `st ding silber.convoy --identity silber.convoy-claude --root ${stRootOf(net)}`,
+      );
+
+      // network chooses rust → the sidecar swaps to `ding` (same args), fully — no `st ding` left.
+      writeNetworkConfig(net, { name: "ournet", ding: "rust" });
+      writePtyToml(dir, spec({ networkRoot: net }));
+      const toml = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
+      expect(toml).toContain(`ding silber.convoy --identity silber.convoy-claude --root ${stRootOf(net)}`);
+      expect(toml).not.toContain("st ding");
+    } finally {
+      rmSync(net, { recursive: true, force: true });
       rmSync(dir, { recursive: true, force: true });
     }
   });

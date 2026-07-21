@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { run } from "./exec.ts";
 import { flagAllowList } from "./command-table.ts";
 import { CONVOY_DIR, DEFAULT_NETWORK_NAME, defaultConvoyNetwork, isNetworkName, networkDirForName, networkDirOfStRoot, networkLayout, stRootOf } from "./paths.ts";
-import { networkNameFromDir, readNetworkConfig, writeNetworkConfig } from "./network-config.ts";
+import { DING_SERVICES, isDingService, networkNameFromDir, readNetworkConfig, writeNetworkConfig, type DingService } from "./network-config.ts";
 import { defaultBinDir, installClis } from "./install-cli.ts";
 import { Bus, isLive, type Agent } from "./bus.ts";
 import { PtyHost, spawnFromPtyFile, workspaceOfPtyfile, type SupervisedSession } from "./host.ts";
@@ -533,7 +533,7 @@ async function askYesNo(question: string, def: boolean): Promise<boolean> {
   return a ? a.startsWith("y") : def;
 }
 
-/** `convoy init [name|dir] [--megarepo <path>] [--quiet|--json] [--yes] [--no-channel]` — stand up a
+/** `convoy init [name|dir] [--megarepo <path>] [--ding node|rust] [--quiet|--json] [--yes] [--no-channel]` — stand up a
  *  correctly-structured network. INTERACTIVE + NARRATED by default (Nathan): on a TTY it walks the user
  *  through network name → megarepo → CoS, and tells them what it's doing at each step. `--quiet`/`--json`
  *  (or a non-TTY, e.g. scripts/evals) skips prompts + narration; `--yes` accepts defaults non-interactively;
@@ -581,6 +581,18 @@ export async function cmdInit(args: string[]): Promise<number> {
     megarepo = abs;
   }
 
+  // 2b. Ding service — which ding sidecar this net runs: node `st ding` (default) or the rust `ding`.
+  //     --ding wins; else preserve a prior config. A machine-runtime choice, so it is NOT prompted for.
+  let ding: DingService | undefined = priorCfg?.ding;
+  const dingInput = optValue(args, "--ding");
+  if (dingInput) {
+    if (!isDingService(dingInput)) {
+      err(`invalid --ding "${dingInput}" (want: ${DING_SERVICES.join(" | ")})`);
+      return 1;
+    }
+    ding = dingInput;
+  }
+
   // 3. Create the structure + config, narrating each step.
   say("→ Creating the network structure (smalltalk/ = the bus · catalog/ = agent files (desired state) · pty/ = runtime · worktrees/ = workspaces)…");
   mkdirSync(layout.stRoot, { recursive: true });
@@ -588,8 +600,9 @@ export async function cmdInit(args: string[]): Promise<number> {
   mkdirSync(layout.ptyRoot, { recursive: true });
   mkdirSync(layout.worktrees, { recursive: true });
   say("→ Recording the network config (convoy.toml)…");
-  writeNetworkConfig(dir, { name: networkNameFromDir(dir), ...(megarepo ? { megarepo } : {}) });
+  writeNetworkConfig(dir, { name: networkNameFromDir(dir), ...(megarepo ? { megarepo } : {}), ...(ding ? { ding } : {}) });
   if (megarepo) say(`   megarepo: ${megarepo}`);
+  if (ding) say(`   ding: ${ding}${ding === "rust" ? " (compoundingtech/ding — rust)" : " (smalltalk st ding — node)"}`);
   say("→ Initializing the smalltalk bus…");
   const stArgs = ["init", layout.stRoot];
   if (hasFlag(args, "--no-channel")) stArgs.push("--no-channel");

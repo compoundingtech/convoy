@@ -15,6 +15,7 @@ import { harnessDescriptor, type Harness } from "./harness.ts";
 import type { PermissionMode, Role } from "./role.ts";
 import { pretrustDir, pretrustDirsCodex } from "./trust.ts";
 import { CONVOY_DIR, networkLayout, stRootOf } from "./paths.ts";
+import { readNetworkConfig, type DingService } from "./network-config.ts";
 import { counterContextRefusal } from "./identity.ts";
 
 /** A harness without MCP always runs the ding sidecar; one with MCP honors its declared transport. */
@@ -134,14 +135,22 @@ export function harnessCommand(
   return `exec ${cmd}${tail}`;
 }
 
+/** The ding-sidecar BINARY for a network's chosen ding service (see network-config.ts `DingService`):
+ *  smalltalk's node `st ding` (default, unset → this) or the rust `ding` (compoundingtech/ding — full
+ *  `st ding` parity, ~0% CPU). Both take IDENTICAL args, so the selector swaps only this prefix. */
+export function dingBin(service?: DingService): string {
+  return service === "rust" ? "ding" : "st ding";
+}
+
 /** The ding sidecar command — pokes the agent's claude session when its bus inbox gets mail. Points at
- *  the stable session id (`st ding <prefix.agentShort> --identity <bus-id>`). `st ding` stays a
- *  smalltalk runtime binary. When a network `root` is given we bake `--root <net>` (smalltalk #85) into
- *  the command line — NOT just the env — so a `pty restart` (which replays the stored command) can never
- *  drop it and silently fall back to st's install-default root (the fleet phantom-poke/non-delivery bug). */
-export function dingCommand(busId: string, claudeSessionId: string, root?: string | null): string {
+ *  the stable session id (`<ding-bin> <prefix.agentShort> --identity <bus-id>`). The ding binary is the
+ *  network's chosen ding service (`dingBin`); default node `st ding`. When a network `root` is given we
+ *  bake `--root <net>` (smalltalk #85) into the command line — NOT just the env — so a `pty restart`
+ *  (which replays the stored command) can never drop it and silently fall back to st's install-default
+ *  root (the fleet phantom-poke/non-delivery bug). The rust ding honors `--root` identically. */
+export function dingCommand(busId: string, claudeSessionId: string, root?: string | null, service?: DingService): string {
   const rootFlag = root ? ` --root ${root}` : "";
-  return `st ding ${claudeSessionId} --identity ${busId}${rootFlag}`;
+  return `${dingBin(service)} ${claudeSessionId} --identity ${busId}${rootFlag}`;
 }
 
 /** Provision the agent's DURABLE CONTEXT dir (`<member>/context/`) — unless the identity is a counter.
@@ -177,6 +186,9 @@ export function provisionContext(memberDir: string, identity: string): string | 
 export function writePtyToml(dir: string, spec: AgentSpec, opts?: { spawner?: string | null }): void {
   const busId = busAgentId(spec); // the host-prefixed bus identity, e.g. silber.convoy-claude
   const root = spec.networkRoot; // the network DIR; ST_ROOT is <root>/smalltalk (the bus), PTY_ROOT is <root>/pty
+  // The ding SERVICE is a per-network choice, recorded in <net>/convoy.toml (unset → node `st ding`). Read
+  // it here so the sidecar command baked into the pty.toml is the network's chosen ding (node or rust).
+  const dingService = root ? readNetworkConfig(root)?.ding : undefined;
   const harnessId = sessionId(spec); // e.g. silber.convoy (agentShort strips the -claude/-codex suffix)
   const dingId = `${harnessId}.ding`; // e.g. silber.convoy.ding
   const permanent = specPermanent(spec);
@@ -216,7 +228,7 @@ export function writePtyToml(dir: string, spec: AgentSpec, opts?: { spawner?: st
         ? {
             ding: {
               id: dingId,
-              command: dingCommand(busId, harnessId, root ? stRootOf(root) : null),
+              command: dingCommand(busId, harnessId, root ? stRootOf(root) : null, dingService),
               tags: { role: "ding", ...(permanent ? { strategy: "permanent" } : {}), ...stTag },
               env,
             },

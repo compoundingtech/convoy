@@ -14,6 +14,7 @@
 
 import { HARNESSES, TRANSPORTS } from "./agent-spec.ts";
 import { ROLE_SPELLINGS } from "./role.ts";
+import { DING_SERVICES } from "./network-config.ts";
 
 /** A `--flag`. `kind` decides whether it consumes the next token — the same distinction `unknownFlag`
  *  makes. `values` is a closed set of completions for the argument; `takesPath` means the argument is a
@@ -93,6 +94,7 @@ export const COMMANDS: readonly CommandSpec[] = [
     flags: [
       { name: "name", desc: "Network name", kind: "value" },
       { name: "megarepo", desc: "Megarepo path agents cut worktrees off", kind: "value", takesPath: true },
+      { name: "ding", desc: "Ding sidecar service (node = st ding, rust = compoundingtech/ding)", kind: "value", values: DING_SERVICES },
       { name: "quiet", desc: "No prompts or narration", kind: "bool" },
       { name: "yes", desc: "Accept defaults non-interactively", kind: "bool" },
       { name: "no-channel", desc: "Skip creating the default channel", kind: "bool" },
