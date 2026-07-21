@@ -10,20 +10,16 @@ import { fileURLToPath } from "node:url";
 import { parse as tomlParse, stringify as tomlStringify } from "smol-toml";
 import { spawnFromPtyFile } from "./host.ts";
 import { ensureInstalled } from "./personas.ts";
-import { busAgentId, resolvedPersonaPath, sessionId, specPermanent, specPermissionMode, type AgentSpec, type Harness } from "./agent-spec.ts";
-import type { Role } from "./role.ts";
+import { busAgentId, resolvedPersonaPath, sessionId, specPermanent, specPermissionMode, type AgentSpec } from "./agent-spec.ts";
+import { harnessDescriptor, type Harness } from "./harness.ts";
+import type { PermissionMode, Role } from "./role.ts";
 import { pretrustDir, pretrustDirsCodex } from "./trust.ts";
 import { CONVOY_DIR, networkLayout, stRootOf } from "./paths.ts";
 import { counterContextRefusal } from "./identity.ts";
 
-// The pty session key is per-harness: claude → [sessions.claude], codex → [sessions.codex]. (Before,
-// this was hardcoded "claude", so `--harness codex` silently wrote a claude session — a false-harness
-// footgun.)
-const HARNESS_SESSION_KEY: Record<Harness, string> = { claude: "claude", codex: "codex" };
-
-/** codex has no MCP transport, so a codex agent always runs the ding sidecar; claude honors its transport. */
+/** A harness without MCP always runs the ding sidecar; one with MCP honors its declared transport. */
 function usesDing(spec: AgentSpec): boolean {
-  return spec.harness === "codex" || spec.transport === "ding";
+  return !harnessDescriptor(spec.harness).supportsMcp || spec.transport === "ding";
 }
 
 // The initial boot-ritual PROMPT handed to claude as its first arg — a COLD start. A real prompt
@@ -117,14 +113,25 @@ function hookRefs(): { stBin: string; sessionStart: string; preCompact: string; 
  *  approvals + sandbox (the parallel to claude's bypass posture). `model` (null → the harness default,
  *  today's behavior) adds `--model '<id>'` — single-quoted for `sh -c`, and the id is charset-validated
  *  upstream (isValidModel) so the quotes can't be broken out of. Both harnesses accept `--model`. */
-export function harnessCommand(harness: Harness, permissionMode: string, prompt: string, model?: string | null, bin?: string | null): string {
-  const modelFlag = model ? ` --model '${model}'` : "";
+export function harnessCommand(
+  harness: Harness,
+  permissionMode: string,
+  prompt: string,
+  model?: string | null,
+  bin?: string | null,
+): string {
   // `bin` replaces ONLY the binary name; every derived flag still applies, so a wrapper inherits the
-  // correct-by-construction wiring instead of having to re-derive it. Charset-validated upstream
-  // (isValidBin) because it lands unquoted in the `sh -c` string.
+  // correct-by-construction wiring instead of having to re-derive it (decision 0005). Charset-validated
+  // upstream (isValidBin) because it lands unquoted in the `sh -c` string.
   const cmd = bin || harness;
-  if (harness === "codex") return `exec ${cmd} --dangerously-bypass-approvals-and-sandbox${modelFlag} '${prompt}'`;
-  return `exec ${cmd} --permission-mode ${permissionMode}${modelFlag} '${prompt}'`;
+  // The flag SHAPE comes from the harness table, so each harness's real CLI is encoded in one reviewable
+  // place instead of an if/else whose `else` silently means "claude".
+  const tail = harnessDescriptor(harness).argv({
+    permissionMode: permissionMode as PermissionMode,
+    model: model ?? null,
+    prompt,
+  });
+  return `exec ${cmd}${tail}`;
 }
 
 /** The ding sidecar command — pokes the agent's claude session when its bus inbox gets mail. Points at
@@ -186,16 +193,20 @@ export function writePtyToml(dir: string, spec: AgentSpec, opts?: { spawner?: st
     env["ST_ROOT"] = stRootOf(root); // the bus root is <net>/smalltalk, NOT the network dir
     env["PTY_ROOT"] = `${root}/pty`;
   }
-  // CLAUDE_CONFIG_DIR relocates Claude Code's whole config (auth/settings/skills) — harness session only,
-  // never the ding sidecar (which is just `st ding` and doesn't read it).
+  // The config-relocation var moves the harness's WHOLE config (auth/settings/skills) — harness session
+  // only, never the ding sidecar (which is just `st ding` and doesn't read it). Which var that is comes
+  // from the harness table: CLAUDE_CONFIG_DIR for claude, CODEX_HOME for codex. Before, this was
+  // hardcoded to CLAUDE_CONFIG_DIR, so `--config-dir` on a codex session set a variable codex does not
+  // read — the flag reported success and selected nothing.
   // Spec `env` first, derived wiring LAST: ST_AGENT/ST_ROOT/PTY_ROOT are correct-by-construction (AC-1)
   // and a hand-written env key must never be able to repoint the agent at another bus.
   const specEnv = spec.env ?? {};
-  const harnessEnv = { ...specEnv, ...env, ...(spec.configDir ? { CLAUDE_CONFIG_DIR: spec.configDir } : {}) };
+  const configEnv = harnessDescriptor(spec.harness).configEnv;
+  const harnessEnv = { ...specEnv, ...env, ...(spec.configDir && configEnv ? { [configEnv]: spec.configDir } : {}) };
   const doc: Record<string, unknown> = {
     prefix: harnessId,
     sessions: {
-      [HARNESS_SESSION_KEY[spec.harness]]: {
+      [harnessDescriptor(spec.harness).sessionKey]: {
         id: harnessId,
         command: harnessCommand(spec.harness, specPermissionMode(spec), bootPrompt(spec.role), spec.model, spec.bin),
         tags: { role: "agent", ...(permanent ? { strategy: "permanent" } : {}), ...stTag, ...agentTags },
@@ -379,8 +390,12 @@ export async function nativeLaunch(spec: AgentSpec): Promise<{ spawned: string[]
   // (nothing clears it now that the launch command has no auto-poker). Harness-specific: claude checks
   // ~/.claude.json, codex checks ~/.codex/config.toml (its --dangerously-bypass flag does NOT skip the
   // directory-trust prompt). Best-effort — never blocks launch.
-  if (spec.harness === "codex") pretrustDirsCodex([dir]);
-  else pretrustDir(dir);
+  // Trust must be seeded in the config the harness will ACTUALLY read. When `configDir` relocates that
+  // config, seeding the ambient one leaves the agent to hit the trust dialog on a cold boot — and codex's
+  // --dangerously-bypass flag does NOT skip it, so the session simply stalls with nobody watching.
+  if (spec.harness === "codex") pretrustDirsCodex([dir], spec.configDir ?? undefined);
+  else if (spec.harness === "claude") pretrustDir(dir, spec.configDir ?? undefined);
+  // opencode / pi seed no trust: convoy has no verified trust-store shape for them (see harness table).
 
   // Footgun-proof: clone role personas if missing (no override).
   if (spec.personaOverride === null) {

@@ -30,7 +30,8 @@ import { structureChecks } from "./doctor/structure.ts";
 import { baseFile, ensureInstalled, personasDir, personasInstalled } from "./personas.ts";
 import { ROLES, parseRole } from "./role.ts";
 import { adHocNotice, generateAdHocIdentity, validateRunIdentity } from "./run.ts";
-import { busAgentId, isValidModel, preflight, resolvedPersonaPath, shortHostname, type AgentSpec, type Harness, type Transport } from "./agent-spec.ts";
+import { busAgentId, isValidModel, preflight, resolvedPersonaPath, shortHostname, type AgentSpec, type Transport } from "./agent-spec.ts";
+import { HARNESSES, HARNESS_SESSION_KEYS, HARNESS_SUFFIX_RE, harnessDescriptor, harnessesInPtyToml, harnessLimitations, isHarness, type Harness } from "./harness.ts";
 import { claudeConfigPath, codexConfigPath, pretrustDirs, pretrustDirsCodex } from "./trust.ts";
 
 // ---- arg helpers ----
@@ -328,8 +329,7 @@ async function usedHarnesses(network: string | null): Promise<Set<Harness>> {
       const pf = s.tags["ptyfile"];
       if (!pf || !existsSync(pf)) continue;
       const toml = readFileSync(pf, "utf8");
-      if (toml.includes("[sessions.codex]")) used.add("codex");
-      if (toml.includes("[sessions.claude]")) used.add("claude");
+      for (const h of harnessesInPtyToml(toml)) used.add(h);
     }
   } catch {
     // best-effort — fall through to the default
@@ -708,8 +708,8 @@ export async function cmdAdd(args: string[]): Promise<number> {
     return 2;
   }
   const harnessRaw = (optValue(args, "--harness") ?? "claude").toLowerCase();
-  if (harnessRaw !== "claude" && harnessRaw !== "codex") {
-    err(`unknown harness "${harnessRaw}". Valid: claude, codex`);
+  if (!isHarness(harnessRaw)) {
+    err(`unknown harness "${harnessRaw}". Valid: ${HARNESSES.join(", ")}`);
     return 2;
   }
   const transport = resolveTransport(args);
@@ -923,8 +923,8 @@ export async function cmdRun(args: string[]): Promise<number> {
   }
 
   const harnessRaw = (optValue(args, "--harness") ?? "claude").toLowerCase();
-  if (harnessRaw !== "claude" && harnessRaw !== "codex") {
-    err(`unknown harness "${harnessRaw}". Valid: claude, codex`);
+  if (!isHarness(harnessRaw)) {
+    err(`unknown harness "${harnessRaw}". Valid: ${HARNESSES.join(", ")}`);
     return 2;
   }
   const transport = resolveTransport(args);
@@ -964,6 +964,12 @@ export async function cmdRun(args: string[]): Promise<number> {
   const dir = optValue(args, "--dir");
   const workingDir = dir ? resolve(expandTilde(dir)) : process.cwd();
 
+  const runBin = optValue(args, "--bin");
+  if (runBin !== null && !isValidBin(runBin)) {
+    err(`invalid --bin "${runBin}" — it is interpolated into the launch command, so it must be a plain path or command name (letters, digits, and . _ / - ), with no spaces, quotes, or shell metacharacters`);
+    return 2;
+  }
+
   const dryRun = hasFlag(args, "--dry-run");
   const spec: AgentSpec = {
     harness: harnessRaw,
@@ -971,9 +977,11 @@ export async function cmdRun(args: string[]): Promise<number> {
     identity,
     transport,
     networkRoot: network,
-    // An ad-hoc session declares no launcher override and no extra environment:
-    // it is the runnable core, so it takes the harness and the network as-is.
-    bin: null,
+    // An ad-hoc session declares no extra environment — it is the runnable core, so it takes the network
+    // as-is. `--bin` IS honored: a deployment that wraps its harness (credential selection, persona
+    // projection, policy gates) wraps it for ad-hoc sessions too, and this path replaces the launcher
+    // aliases that were themselves those wrappers.
+    bin: runBin,
     env: {},
     personaOverride: optValue(args, "--persona"),
     workingDir,
@@ -1242,7 +1250,7 @@ export async function cmdRemove(args: string[]): Promise<number> {
   const host = new PtyHost(network);
   const sessions = (await host.sessions()).filter((s) => {
     const dn = s.tags["ptyfile.session"];
-    return s.name === identity || dn === identity || ["claude", "codex", "ding"].some((suf) => `${identity}-${suf}` === dn);
+    return s.name === identity || dn === identity || [...HARNESS_SESSION_KEYS, "ding"].some((suf) => `${identity}-${suf}` === dn);
   });
   out("convoy remove — plan:");
   // Decommission = set retired=true (the union-safe edit), NOT delete — a deleted catalog file is restored by a
@@ -1363,7 +1371,7 @@ export async function cmdReload(args: string[]): Promise<number> {
   // Match the agent's sessions (claude + ding) robustly by their repo dir — each agent's session
   // runs in its own repo, so the pty.toml dir (or cwd) basename identifies the agent, surviving
   // session-name churn. Normalize both (drop harness suffix + non-alphanumerics).
-  const norm = (s: string): string => s.replace(/-(claude|codex)$/i, "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+  const norm = (s: string): string => s.replace(HARNESS_SUFFIX_RE, "").replace(/[^a-z0-9]/gi, "").toLowerCase();
   const dirOf = (s: SupervisedSession): string => {
     const pf = s.tags["ptyfile"];
     return pf ? basename(workspaceOfPtyfile(pf)) : s.cwd ? basename(s.cwd) : "";
@@ -1430,20 +1438,33 @@ export async function cmdPretrust(args: string[]): Promise<number> {
     return 2;
   }
   const harness = (optValue(args, "--harness") ?? "claude").toLowerCase();
-  if (harness !== "claude" && harness !== "codex") {
-    err(`unknown harness "${harness}". Valid: claude, codex`);
+  if (!isHarness(harness)) {
+    err(`unknown harness "${harness}". Valid: ${HARNESSES.join(", ")}`);
     return 2;
   }
   const configDir = optValue(args, "--config-dir");
-  if (configDir && harness === "codex") {
-    err("--config-dir applies only to --harness claude (relocates ~/.claude.json); codex trust lives in ~/.codex/config.toml");
+  // `--config-dir` names the harness's OWN config-relocation target — `<dir>/.claude.json` for claude,
+  // `<dir>/config.toml` for codex. It was previously refused for codex on the grounds that it "applies
+  // only to claude"; that was true of the implementation, not of codex, which relocates via CODEX_HOME
+  // exactly as claude does via CLAUDE_CONFIG_DIR (decision 0004 names both). The refusal now falls where
+  // it is actually true: a harness with no config-relocation var at all.
+  const configEnvName = harnessDescriptor(harness).configEnv;
+  if (configDir && configEnvName === null) {
+    err(`--config-dir does not apply to --harness ${harness}: it has no config-relocation environment variable, so convoy cannot select an account for it`);
+    return 2;
+  }
+  // Pre-trust writes a harness-specific trust store. convoy only knows two of those shapes; for anything
+  // else, writing the claude file would report success for a trust the agent never reads. Refuse instead.
+  if (harness !== "claude" && harness !== "codex") {
+    err(`convoy has no trust store for --harness ${harness}; pre-trust its workspace with the harness itself`);
     return 2;
   }
   const abs = dirs.map((d) => resolve(expandTilde(d)));
   for (const d of abs) if (!existsSync(d)) err(`warning: ${d} does not exist yet — create it before pre-trusting so the realpath matches (proceeding on the literal path)`);
-  const cfgPath = harness === "codex" ? codexConfigPath() : configDir ? `${resolve(expandTilde(configDir))}/.claude.json` : claudeConfigPath();
+  const cfgDirAbs = configDir ? resolve(expandTilde(configDir)) : undefined;
+  const cfgPath = harness === "codex" ? codexConfigPath(cfgDirAbs) : cfgDirAbs ? `${cfgDirAbs}/.claude.json` : claudeConfigPath();
   const { trusted, failed } =
-    harness === "codex" ? pretrustDirsCodex(abs) : pretrustDirs(abs, configDir ? resolve(expandTilde(configDir)) : undefined);
+    harness === "codex" ? pretrustDirsCodex(abs, cfgDirAbs) : pretrustDirs(abs, cfgDirAbs);
   for (const t of trusted) out(`  ✓ ${t}`);
   if (failed.length > 0) {
     err(`could not write pre-trust for ${failed.length} dir(s) — check ${cfgPath} is readable + writable`);

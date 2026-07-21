@@ -12,7 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { childEnv } from "../exec.ts";
 
-export type Harness = "claude" | "codex";
+// The canonical Harness — see the note in checkup.ts. A local copy here meant a widened union produced
+// no auth probe and no warning for the new member.
+export type { Harness } from "../harness.ts";
+import { HARNESSES, harnessDescriptor, type Harness } from "../harness.ts";
 
 /** Normalized outcome of one harness's auth probe.
  *  - `live`         — a real call SUCCEEDED (auth verified end-to-end).
@@ -29,8 +32,15 @@ export interface AuthOutcome {
   fix?: string;
 }
 
-const HARNESS_NAME: Record<Harness, string> = { claude: "Claude", codex: "Codex" };
-const RELOGIN: Record<Harness, string> = { claude: "run `claude` then `/login`", codex: "run `codex login`" };
+// Partial by TYPE, because it is partial in FACT: only harnesses declaring `supportsAuth` have a probe,
+// a display name, and a relogin hint. A total Record would have to invent entries for harnesses convoy
+// cannot probe, and the invented value is what would then be reported to an operator as truth.
+const HARNESS_NAME: Partial<Record<Harness, string>> = { claude: "Claude", codex: "Codex" };
+const RELOGIN: Partial<Record<Harness, string>> = { claude: "run `claude` then `/login`", codex: "run `codex login`" };
+/** Display name for a harness, falling back to its own id (never a wrong harness's name). */
+function harnessName(h: Harness): string {
+  return HARNESS_NAME[h] ?? h;
+}
 
 /** PURE classifier: map a probe signal to a preflight outcome. This is the unit-tested core — it needs no real
  *  auth, so a test can inject any signal and assert the outcome (live → pass, signed-out → fail + actionable).
@@ -116,11 +126,15 @@ export function classifyProbe(res: ProbeExec): AuthSignal {
 export async function probeHarness(harness: Harness): Promise<AuthSignal> {
   const dir = mkdtempSync(join(tmpdir(), "cvd-auth-"));
   try {
-    const spec: Record<Harness, string[]> = {
+    const spec: Partial<Record<Harness, string[]>> = {
       claude: ["-p", "Reply with exactly: ok", "--model", "claude-haiku-4-5-20251001", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'],
       codex: ["exec", "--skip-git-repo-check", "Reply with exactly: ok"],
     };
-    const res = await execProbe(harness, spec[harness], dir);
+    const argv = spec[harness];
+    // A harness with no probe argv declares `supportsAuth: false`, so authReadiness never reaches here for
+    // one. Guarding anyway: an unprobeable harness must read as "unknown", never as another harness's result.
+    if (!argv) return "inconclusive";
+    const res = await execProbe(harness, argv, dir);
     return classifyProbe(res); // pure + unit-tested; timeout → inconclusive, only a clear signal → signed-out
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -158,7 +172,9 @@ export async function authReadiness(
   detector: Detector = onPath,
   isRequired: (h: Harness) => boolean = () => true,
 ): Promise<AuthOutcome[]> {
-  const harnesses: Harness[] = ["claude", "codex"];
+  // Derived from the harness table: probe only harnesses that declare an auth probe. A harness without
+  // one is absent from this list rather than reported as healthy on another harness's probe.
+  const harnesses: Harness[] = HARNESSES.filter((h) => harnessDescriptor(h).supportsAuth);
   return Promise.all(
     harnesses.map(async (h) =>
       (await detector(h)) ? classifyAuthSignal(h, await prober(h), isRequired(h)) : classifyAuthSignal(h, "unavailable", isRequired(h)),

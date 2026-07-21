@@ -20,8 +20,8 @@ export function claudeConfigPath(): string {
  *  shrink the window for clobbering a concurrent Claude write. Best-effort: returns false (never throws) if
  *  the config can't be read/written — a launch must not fail because the trust pre-write hiccuped. Returns
  *  true when the folder is trusted (written now, or already was). */
-export function pretrustDir(dir: string): boolean {
-  return pretrustDirs([dir]).failed.length === 0;
+export function pretrustDir(dir: string, configDir?: string): boolean {
+  return pretrustDirs([dir], configDir).failed.length === 0;
 }
 
 /** The canonical path Claude Code looks a folder up by: its realpath (resolves symlinks like `/tmp`→
@@ -97,9 +97,14 @@ export function untrustDirs(dirs: string[]): void {
   }
 }
 
-/** Path to codex's per-user config (honors $HOME). */
-export function codexConfigPath(): string {
-  return `${process.env["HOME"] ?? homedir()}/.codex/config.toml`;
+/** Path to codex's config. `codexHome` is a relocated `CODEX_HOME` (convoy's `--config-dir` for a codex
+ *  agent); omitted → the ambient `~/.codex`. codex reads `$CODEX_HOME/config.toml`, so an agent launched
+ *  with a relocated home reads its trust from there — seeding the ambient file would trust the dir in a
+ *  config that agent never opens, and the symptom is a silent stall on the trust dialog rather than an
+ *  error (its --dangerously-bypass flag does not skip that prompt). */
+export function codexConfigPath(codexHome?: string): string {
+  const home = codexHome ? resolve(codexHome) : `${process.env["HOME"] ?? homedir()}/.codex`;
+  return `${home}/config.toml`;
 }
 
 /** CODEX analog of pretrustDirs. codex checks directory trust in `~/.codex/config.toml` as
@@ -110,8 +115,8 @@ export function codexConfigPath(): string {
  *  already present, rather than parse+rewrite the whole TOML — that preserves the user's existing config +
  *  comments (a full rewrite would drop them). Idempotent (skips a header already there — codex-written blocks
  *  are always trusted); atomic (temp+rename); best-effort. */
-export function pretrustDirsCodex(dirs: string[]): { trusted: string[]; failed: string[] } {
-  const path = codexConfigPath();
+export function pretrustDirsCodex(dirs: string[], codexHome?: string): { trusted: string[]; failed: string[] } {
+  const path = codexConfigPath(codexHome);
   try {
     const text = existsSync(path) ? readFileSync(path, "utf8") : "";
     const trusted: string[] = [];
@@ -144,8 +149,8 @@ export function pretrustDirsCodex(dirs: string[]): { trusted: string[]; failed: 
  *  its ephemeral sandbox dirs even though those agents are claude — this cleans them at teardown so the user's
  *  real codex config is left untouched. Only removes doctor's exact 2-line shape (header immediately followed by
  *  the trusted line), preserving any surrounding user config + comments. Best-effort + atomic. */
-export function untrustDirsCodex(dirs: string[]): void {
-  const path = codexConfigPath();
+export function untrustDirsCodex(dirs: string[], codexHome?: string): void {
+  const path = codexConfigPath(codexHome);
   try {
     if (!existsSync(path)) return;
     const lines = readFileSync(path, "utf8").split("\n");

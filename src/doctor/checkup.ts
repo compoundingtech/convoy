@@ -14,7 +14,12 @@
 import { execFile } from "node:child_process";
 import { childEnv, type ExecResult } from "../exec.ts";
 
-export type Harness = "claude" | "codex";
+// The canonical Harness — NOT a local copy. This module previously declared its own
+// `"claude" | "codex"`, so widening the real union left doctor silently unchanged: a new harness got no
+// checkup and nothing said so. Importing the real type makes `SPECS` fail to typecheck until every
+// harness is either given a checkup spec or explicitly declared unsupported in the harness table.
+export type { Harness } from "../harness.ts";
+import { HARNESSES, harnessDescriptor, type Harness } from "../harness.ts";
 
 export interface Version {
   major: number;
@@ -58,7 +63,8 @@ interface HarnessSpec {
 const DISTILL_PROMPT = (bin: string, raw: string): string =>
   `Summarize the output of \`${bin} doctor\` (a local install/config health check) as 1-3 short bullet points — ONLY real issues a user should fix, each with the fix if obvious. Ignore routine version-update notices. If nothing is actionable, reply with exactly: OK. Output follows:\n\n${raw}`;
 
-const SPECS: Record<Harness, HarnessSpec> = {
+// Partial by TYPE — see the note on HARNESS_NAME in auth.ts. Only `supportsDoctor` harnesses have a spec.
+const SPECS: Partial<Record<Harness, HarnessSpec>> = {
   claude: {
     harness: "claude",
     label: "Claude Code",
@@ -124,6 +130,12 @@ export function countIssues(raw: string): number {
  *  throws. Runner injectable for tests. */
 export async function harnessCheckup(harness: Harness, distill: boolean, runner: Runner = timedRun): Promise<CheckupResult> {
   const spec = SPECS[harness];
+  // No checkup spec = this harness declares `supportsDoctor: false`. `harnessCheckups` filters those out,
+  // so this is only reachable via a direct call — and it must report "not checked", never fall through to
+  // another harness's spec and present that result under this harness's name.
+  if (!spec) {
+    return { harness, label: harness, state: "no-doctor", note: `${harness} — no convoy doctor checkup for this harness (advisory, not gated)` };
+  }
   const base = { harness, label: spec.label };
 
   const ver = await runner(spec.bin, ["--version"], 10_000);
@@ -170,5 +182,14 @@ export async function harnessCheckup(harness: Harness, distill: boolean, runner:
 /** Run the installed harnesses' checkups in PARALLEL (latency = the slowest single harness, not the sum).
  *  `distill` (= NOT --quick) gates the LLM distill of any issues onto the full `convoy doctor` only. */
 export async function harnessCheckups(distill: boolean, runner: Runner = timedRun): Promise<CheckupResult[]> {
-  return Promise.all((["claude", "codex"] as Harness[]).map((h) => harnessCheckup(h, distill, runner)));
+  // Only harnesses that DECLARE doctor support are checked. The list is derived from the harness table
+  // rather than written out here, so a new harness cannot be silently omitted (or silently included and
+  // probed with another harness's flags) — it is checked iff it says it can be.
+  return Promise.all(HARNESSES.filter((h) => harnessDescriptor(h).supportsDoctor).map((h) => harnessCheckup(h, distill, runner)));
+}
+
+/** Harnesses convoy can launch but cannot check. `convoy doctor` reports these by name so an operator
+ *  running one is told that a clean doctor run does NOT cover it. */
+export function unCheckedHarnesses(): Harness[] {
+  return HARNESSES.filter((h) => !harnessDescriptor(h).supportsDoctor);
 }

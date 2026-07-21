@@ -10,7 +10,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { stringify as tomlStringify } from "smol-toml";
 import { parseRole, type Role } from "./role.ts";
-import { isValidModel, type AgentSpec, type Harness, type Transport } from "./agent-spec.ts";
+import { isValidModel, type AgentSpec, type Transport } from "./agent-spec.ts";
+import { HARNESS_LIST, harnessDescriptor, isHarness, type Harness } from "./harness.ts";
 import { identityErrors, type IdentityContext } from "./identity.ts";
 import { asArray, decodeSpecText, formatOfPath, type SpecDoc, type SpecFormat } from "./spec-format.ts";
 
@@ -26,7 +27,8 @@ export interface AgentFile {
   host?: string;
   /** The repo/worktree the agent runs in — where render materializes the overlay. `--dir` overrides it. */
   workspace?: string;
-  /** claude | codex. Omit → claude. */
+  /** claude | codex | opencode | pi. Omit → claude. See src/harness.ts for what convoy supports per
+   *  harness — opencode and pi launch, but get no account selection, doctor checkup, or auth probe. */
   harness?: Harness;
   /** Per-agent model id (`claude --model <id>` / `codex --model <id>`). Omit → the harness default (today's
    *  behavior). Free-form (model ids churn) but charset-validated on parse — it lands in the launch command. */
@@ -141,7 +143,7 @@ export function parseAgentFile(text: string, format: SpecFormat = "toml", idCont
   if (!role) throw new Error(`invalid \`role\` "${roleRaw}" (want: chief-of-staff | supervisor | worker | technical-manager)`);
 
   const harnessRaw = str("harness");
-  if (harnessRaw !== undefined && harnessRaw !== "claude" && harnessRaw !== "codex") throw new Error(`invalid \`harness\` "${harnessRaw}" (want: claude | codex)`);
+  if (harnessRaw !== undefined && !isHarness(harnessRaw)) throw new Error(`invalid \`harness\` "${harnessRaw}" (want: ${HARNESS_LIST})`);
   const transportRaw = str("transport");
   if (transportRaw !== undefined && transportRaw !== "ding" && transportRaw !== "mcp") throw new Error(`invalid \`transport\` "${transportRaw}" (want: ding | mcp)`);
   const strategyRaw = str("strategy");
@@ -294,7 +296,9 @@ export function readAgentFile(path: string, idContext?: IdentityContext): AgentF
 /** Compile an AgentFile (+ its network + an optional workspace override) DOWN to the AgentSpec that the
  *  overlay writers consume. This is render's core mapping. Defaults: harness=claude, transport=ding; host →
  *  the host-prefix (null → this machine's short hostname); strategy=permanent → permanentOverride. `tier`
- *  is derived from role by the writers (v1), and `env` is not yet materialized — both carried forward-compat. */
+ *  is derived from role by the writers (v1) and carried forward-compat. `env` IS materialized: it is
+ *  carried onto the spec and spread into the derived harness session (see writePtyToml), which is what
+ *  makes `CODEX_HOME` — and any other harness's credential variable — work with no convoy change. */
 export function agentFileToSpec(af: AgentFile, opts: { networkRoot: string | null; workspace?: string | undefined }): AgentSpec {
   return {
     harness: af.harness ?? "claude",
@@ -306,10 +310,11 @@ export function agentFileToSpec(af: AgentFile, opts: { networkRoot: string | nul
     workingDir: opts.workspace ?? af.workspace ?? null,
     permanentOverride: af.strategy === "permanent" ? true : null,
     prefix: af.prefix ?? af.host ?? null,
-    // CLAUDE_CONFIG_DIR is CREDENTIAL SELECTION, and credentials ride in `env` — there is no separate
-    // `account` field to fall out of sync with it. Read it back out of `env` so the derived pty.toml and
-    // the spec agree by construction.
-    configDir: af.env?.["CLAUDE_CONFIG_DIR"] ?? null,
+    // `env` is the GENERAL credential seam (decision 0004) and is carried verbatim below; `configDir` is
+    // the narrower projection of it that the imperative CLI (`--config-dir`) and pre-trust both need as a
+    // single value. Read it back out of `env`, per harness, so the declaration and the derived pty.toml
+    // cannot disagree — and so a codex spec's CODEX_HOME reaches pre-trust the same way claude's does.
+    configDir: (harnessDescriptor(af.harness ?? "claude").configEnv && af.env?.[harnessDescriptor(af.harness ?? "claude").configEnv!]) || null,
     model: af.model ?? null,
     bin: af.bin ?? null,
     env: af.env ?? null,
