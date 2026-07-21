@@ -143,3 +143,18 @@ export function harnessLimitations(h: Harness): string[] {
   if (!d.supportsMcp) out.push("no MCP transport (coerced to the ding sidecar)");
   return out;
 }
+
+/** Every harness's pty.toml session key — `[sessions.<key>]`. Used to recognise a rendered manifest's
+ *  harness and to match an agent's sessions by name. Derived, so a new harness is recognised by the code
+ *  that tears agents down and reports what a network runs, not just by the code that launches them. */
+export const HARNESS_SESSION_KEYS: readonly string[] = HARNESSES.map((h) => HARNESS_TABLE[h].sessionKey);
+
+/** Strips a trailing `-<harness>` suffix from an identity (`convoy-codex` → `convoy`). Built from the
+ *  table rather than a hand-written alternation, which silently stopped matching new harnesses. */
+export const HARNESS_SUFFIX_RE = new RegExp(`-(${HARNESSES.join("|")})$`, "i");
+
+/** Which harness does a rendered pty.toml declare? Reads the session keys, so an opencode manifest is
+ *  recognised as opencode instead of falling through to the claude default. */
+export function harnessesInPtyToml(toml: string): Harness[] {
+  return HARNESSES.filter((h) => toml.includes(`[sessions.${HARNESS_TABLE[h].sessionKey}]`));
+}

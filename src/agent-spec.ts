@@ -5,7 +5,7 @@ import { existsSync, statSync } from "node:fs";
 import { hostname } from "node:os";
 import { baseFile } from "./personas.ts";
 import { permanentByRole, type PermissionMode, type Role } from "./role.ts";
-import { harnessDescriptor, type Harness } from "./harness.ts";
+import { harnessDescriptor, HARNESS_SUFFIX_RE, type Harness } from "./harness.ts";
 
 // Closed enums as const ARRAYS with the type derived from them, so the CLI's `--transport`/`--harness`
 // completions can read the real list instead of retyping it (a type alone is not iterable at runtime).
@@ -67,7 +67,7 @@ export function specPrefix(s: AgentSpec): string {
 }
 /** The agent's short name — the bus identity minus the harness suffix (`convoy-claude` → `convoy`). */
 export function agentShort(identity: string): string {
-  return identity.replace(/-(claude|codex)$/i, "");
+  return identity.replace(HARNESS_SUFFIX_RE, "");
 }
 /** The pinned pty session id for the claude session: `<prefix>.<agentShort>` (e.g. `silber.convoy`).
  *  The ding session appends `.ding`. Stable across respawns so ding + name refs never drift. */

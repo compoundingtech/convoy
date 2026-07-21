@@ -31,7 +31,7 @@ import { baseFile, ensureInstalled, personasDir, personasInstalled } from "./per
 import { ROLES, parseRole } from "./role.ts";
 import { adHocNotice, generateAdHocIdentity, validateRunIdentity } from "./run.ts";
 import { busAgentId, isValidModel, preflight, resolvedPersonaPath, shortHostname, type AgentSpec, type Transport } from "./agent-spec.ts";
-import { HARNESSES, harnessDescriptor, harnessLimitations, isHarness, type Harness } from "./harness.ts";
+import { HARNESSES, HARNESS_SESSION_KEYS, HARNESS_SUFFIX_RE, harnessDescriptor, harnessesInPtyToml, harnessLimitations, isHarness, type Harness } from "./harness.ts";
 import { claudeConfigPath, codexConfigPath, pretrustDirs, pretrustDirsCodex } from "./trust.ts";
 
 // ---- arg helpers ----
@@ -329,8 +329,7 @@ async function usedHarnesses(network: string | null): Promise<Set<Harness>> {
       const pf = s.tags["ptyfile"];
       if (!pf || !existsSync(pf)) continue;
       const toml = readFileSync(pf, "utf8");
-      if (toml.includes("[sessions.codex]")) used.add("codex");
-      if (toml.includes("[sessions.claude]")) used.add("claude");
+      for (const h of harnessesInPtyToml(toml)) used.add(h);
     }
   } catch {
     // best-effort — fall through to the default
@@ -1251,7 +1250,7 @@ export async function cmdRemove(args: string[]): Promise<number> {
   const host = new PtyHost(network);
   const sessions = (await host.sessions()).filter((s) => {
     const dn = s.tags["ptyfile.session"];
-    return s.name === identity || dn === identity || ["claude", "codex", "ding"].some((suf) => `${identity}-${suf}` === dn);
+    return s.name === identity || dn === identity || [...HARNESS_SESSION_KEYS, "ding"].some((suf) => `${identity}-${suf}` === dn);
   });
   out("convoy remove — plan:");
   // Decommission = set retired=true (the union-safe edit), NOT delete — a deleted catalog file is restored by a
@@ -1372,7 +1371,7 @@ export async function cmdReload(args: string[]): Promise<number> {
   // Match the agent's sessions (claude + ding) robustly by their repo dir — each agent's session
   // runs in its own repo, so the pty.toml dir (or cwd) basename identifies the agent, surviving
   // session-name churn. Normalize both (drop harness suffix + non-alphanumerics).
-  const norm = (s: string): string => s.replace(/-(claude|codex)$/i, "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+  const norm = (s: string): string => s.replace(HARNESS_SUFFIX_RE, "").replace(/[^a-z0-9]/gi, "").toLowerCase();
   const dirOf = (s: SupervisedSession): string => {
     const pf = s.tags["ptyfile"];
     return pf ? basename(workspaceOfPtyfile(pf)) : s.cwd ? basename(s.cwd) : "";

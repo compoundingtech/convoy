@@ -11,7 +11,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentFileToSpec, parseAgentFile } from "./agent-file.ts";
 import { harnessCommand, writePtyToml } from "./launch.ts";
-import { HARNESSES, harnessDescriptor, harnessLimitations, isHarness } from "./harness.ts";
+import { HARNESSES, HARNESS_SESSION_KEYS, HARNESS_SUFFIX_RE, harnessDescriptor, harnessesInPtyToml, harnessLimitations, isHarness } from "./harness.ts";
+import { agentShort } from "./agent-spec.ts";
 import { codexConfigPath, pretrustDirsCodex } from "./trust.ts";
 import type { AgentSpec } from "./agent-spec.ts";
 
@@ -227,5 +228,41 @@ describe("a harness declares what it does NOT support", () => {
       const toml = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
       expect(toml.includes("[sessions.ding]")).toBe(!harnessDescriptor(h).supportsMcp);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Operability — a declared agent must also be RECOGNISABLE to the other verbs
+// ---------------------------------------------------------------------------
+
+// These sites are plain string literals with no type coupling, so neither tsc nor the launch tests catch
+// them. They are what decides whether a new harness is genuinely operable or merely launchable: they back
+// `convoy ls` (what harnesses does this network run?), `convoy remove`, and `convoy down` (which sessions
+// belong to this agent?). All FAIL ON MAIN for opencode/pi — main hardcodes /claude|codex/ at each one,
+// so an opencode agent would be reported as claude and missed by identity matching at teardown.
+describe("a declared agent is recognisable to the verbs that manage it", () => {
+  it("a rendered manifest is recognised as its OWN harness, not defaulted to claude", () => {
+    for (const h of HARNESSES) {
+      const dir = tmp();
+      writePtyToml(dir, spec({ harness: h }));
+      const toml = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
+      expect(harnessesInPtyToml(toml)).toEqual([h]);
+    }
+  });
+
+  it("the session-key list covers every harness, so identity matching cannot miss one", () => {
+    expect([...HARNESS_SESSION_KEYS].sort()).toEqual([...HARNESSES].sort());
+    // The shape `convoy remove` / `convoy down` match on: `<identity>-<sessionKey>`.
+    for (const h of HARNESSES) {
+      expect([...HARNESS_SESSION_KEYS, "ding"].some((suf) => `alpha-${suf}` === `alpha-${h}`)).toBe(true);
+    }
+  });
+
+  it("the harness suffix is stripped for every harness, not just claude/codex", () => {
+    for (const h of HARNESSES) {
+      expect(agentShort(`alpha-${h}`)).toBe("alpha");
+      expect(HARNESS_SUFFIX_RE.test(`alpha-${h}`)).toBe(true);
+    }
+    expect(agentShort("alpha-gemini")).toBe("alpha-gemini");
   });
 });
