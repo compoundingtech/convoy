@@ -11,6 +11,7 @@ import { defaultConvoyNetwork, isNetworkName, networkDirForName, networkDirOfStR
 import {
   classify,
   classifyFailedAttempt,
+  clearParkForFreshSupervisor,
   effectiveLimit,
   effectiveWindow,
   isFlapping,
@@ -358,6 +359,33 @@ export async function up(opts: UpOptions): Promise<number> {
   const thisHost = shortHostname(); // the catalog host-filter key — up only launches/adopts agents whose host is us
   const notify = opts.notify ?? [];
   const dingTargets = (crashed: SupervisedSession, sessions: readonly SupervisedSession[]): string[] => crashDingTargets(crashed, sessions, notify, busIdOf);
+
+  // FRESH-SUPERVISOR UN-PARK (parking-recovery, 2026-07-22). A foreground `convoy up` is a DELIBERATE
+  // bring-up — after a mass outage it MUST restore the FULL fleet, not inherit a prior supervisor's
+  // give-up. `strategy.status=flapping` + the fast-fail counter persist to each session's tags, so a
+  // parked agent stays parked across a restart (classify's `isFlapping → skip`), and a bring-up brought
+  // back only part of the fleet — the rest had to be hand-launched. So, ONCE at startup, clear the park
+  // and zero the counter for permanent members (regardless of prior fail count); the cap re-accrues
+  // tick-to-tick within THIS supervisor's watch. A fully-gone parked agent (no session record left) is
+  // relaunched by the catalog pass instead — this handles the gone-but-recorded ones the cap would skip.
+  //
+  // `--once` (the shepherd cron) SKIPS this: it runs every few minutes, so un-parking there would
+  // relaunch a genuinely broken agent every tick. Parking must stay durable across `--once`.
+  if (opts.once !== true) {
+    const startupNow = new Date();
+    for (const s of await host.sessions()) {
+      if (!isPermanent(s)) continue;
+      const cleared = clearParkForFreshSupervisor(parseStrategyTags(s.tags));
+      if (!cleared) continue;
+      host.removeTag(s.name, TAG.status); // updateTags MERGES — the park must be removed, not just overwritten
+      host.setTags(s.name, writtenTags(cleared)); // consecutive-fast-fails → 0
+      state.set(s.name, cleared);
+      emit(
+        { type: "unpark", identity: logicalId(s), session: s.name, ts: isoString(startupNow) },
+        `[convoy-up] fresh supervisor — cleared parked/flapping state for ${logicalId(s)} session=${s.name}; giving it a fresh cap budget`,
+      );
+    }
+  }
 
   const tick = async (): Promise<void> => {
     const now = new Date();
@@ -733,4 +761,50 @@ export async function down(opts: DownOptions): Promise<number> {
   } finally {
     if (acquired) lock.release();
   }
+}
+
+export interface RestartOptions {
+  network?: string | undefined;
+  json?: boolean;
+  /** How long to wait for the running host to release the lock after the stop signal (ms). */
+  stopTimeoutMs?: number;
+}
+
+/** `convoy restart [<network>]` — the SAFE restart, and the whole reason it exists: it is NOT `convoy
+ *  down` + `convoy up`. `down` KILLS every agent (it is the only teardown), so restarting a live network
+ *  that way is the mass-outage footgun — the exact shape of the 2026-07-22 incident. `restart` instead
+ *  STOPS the host PROCESS with SIGTERM (agents keep running — the Nomad decoupling: up's signal handler
+ *  just sets `stop`, and its exit path leaves every session up), waits for it to release the host lock,
+ *  then becomes a fresh `convoy up` that RE-ADOPTS the still-running agents (reconcile skips live ones).
+ *  If no host is running, it simply starts one. */
+export async function restart(opts: RestartOptions): Promise<number> {
+  const root = resolveRoot(opts.network);
+  const lock = new HostLock(root);
+  const json = opts.json === true;
+
+  const owner = lock.liveOwner();
+  if (owner !== null) {
+    process.stderr.write(`convoy restart: stopping host pid ${owner} (agents keep running — this is NOT convoy down)…\n`);
+    try {
+      process.kill(owner, "SIGTERM"); // graceful stop → up sets `stop`, exits, keeps every session, releases the lock
+    } catch {
+      // already gone between the read and the signal — fall through to the wait, which will see it released
+    }
+    // Wait for the old host to release the lock; a fresh `up` would otherwise refuse (single-owner guard),
+    // or worse, two hosts would briefly double-supervise. Poll the lock rather than the pid so we key on
+    // the same signal `up`'s guard does.
+    const deadline = Date.now() + (opts.stopTimeoutMs ?? 15000);
+    while (Date.now() < deadline && lock.liveOwner() !== null) await sleep(100);
+    if (lock.liveOwner() !== null) {
+      process.stderr.write(`convoy restart: host pid ${owner} did not stop within the timeout — aborting so we never double-host. Stop it by hand, then \`convoy up\`.\n`);
+      return 1;
+    }
+    process.stderr.write(`convoy restart: host stopped; re-adopting the running agents…\n`);
+  } else {
+    process.stderr.write(`convoy restart: no host is running — starting a fresh one.\n`);
+  }
+
+  // Become the new foreground host. It re-adopts the still-running sessions (the reconcile skips live
+  // ones — `if (!gone(s)) continue`) and, per the fresh-supervisor un-park, restores any parked members.
+  return up({ network: opts.network, json });
 }
