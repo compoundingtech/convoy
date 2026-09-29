@@ -63,12 +63,12 @@ describe("credential selection is per-harness, not claude-shaped", () => {
   // LOCK — passes on main. The reported gap ("a codex agent has no way to select an account") was already
   // closed for the DECLARATIVE path by the verbatim `env` spread. Pinned so it stays closed.
   it("LOCK: a codex agent file's CODEX_HOME reaches the launched session, and not the ding sidecar", () => {
-    const af = parseAgentFile(`${MIN}harness = "codex"\n[env]\nCODEX_HOME = "/home/u/.codex-alt"\n`);
+    const af = parseAgentFile(`${MIN}harness = "codex"\n[env]\nCODEX_HOME = "/home/example/.codex-alt"\n`);
     const dir = tmp();
     writePtyToml(dir, agentFileToSpec(af, { networkRoot: null }));
     const toml = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
 
-    expect(toml).toContain('CODEX_HOME = "/home/u/.codex-alt"');
+    expect(toml).toContain('CODEX_HOME = "/home/example/.codex-alt"');
     // Exactly once: the harness session. The ding sidecar is `st ding` and must not carry credentials.
     expect(toml.match(/CODEX_HOME/g)?.length).toBe(1);
     expect(toml.split("[sessions.ding.env]")[1] ?? "").not.toContain("CODEX_HOME");
@@ -78,14 +78,14 @@ describe("credential selection is per-harness, not claude-shaped", () => {
   // `--config-dir` on a codex session set a variable codex does not read. The flag reported success and
   // selected nothing — the failure mode is a session silently running as the WRONG ACCOUNT.
   it("--config-dir on a codex session sets CODEX_HOME, never CLAUDE_CONFIG_DIR", () => {
-    const env = harnessEnv(spec({ harness: "codex", configDir: "/home/u/.codex-alt" }));
-    expect(env["CODEX_HOME"]).toBe("/home/u/.codex-alt");
+    const env = harnessEnv(spec({ harness: "codex", configDir: "/home/example/.codex-alt" }));
+    expect(env["CODEX_HOME"]).toBe("/home/example/.codex-alt");
     expect(env["CLAUDE_CONFIG_DIR"]).toBeUndefined();
   });
 
   it("--config-dir on a claude session still sets CLAUDE_CONFIG_DIR (unchanged)", () => {
-    const env = harnessEnv(spec({ harness: "claude", configDir: "/home/u/.claude-alt" }));
-    expect(env["CLAUDE_CONFIG_DIR"]).toBe("/home/u/.claude-alt");
+    const env = harnessEnv(spec({ harness: "claude", configDir: "/home/example/.claude-alt" }));
+    expect(env["CLAUDE_CONFIG_DIR"]).toBe("/home/example/.claude-alt");
     expect(env["CODEX_HOME"]).toBeUndefined();
   });
 
@@ -93,13 +93,13 @@ describe("credential selection is per-harness, not claude-shaped", () => {
   // CODEX_HOME never became `configDir` — which is what pre-trust keys on. The env var reached the
   // process (see the LOCK test) but convoy did not KNOW the config was relocated.
   it("a codex spec's CODEX_HOME is lifted to configDir, so convoy knows the config moved", () => {
-    const af = parseAgentFile(`${MIN}harness = "codex"\n[env]\nCODEX_HOME = "/home/u/.codex-alt"\n`);
-    expect(agentFileToSpec(af, { networkRoot: null }).configDir).toBe("/home/u/.codex-alt");
+    const af = parseAgentFile(`${MIN}harness = "codex"\n[env]\nCODEX_HOME = "/home/example/.codex-alt"\n`);
+    expect(agentFileToSpec(af, { networkRoot: null }).configDir).toBe("/home/example/.codex-alt");
   });
 
   it("a claude spec still lifts CLAUDE_CONFIG_DIR, and does not read the other harness's var", () => {
-    const af = parseAgentFile(`${MIN}[env]\nCLAUDE_CONFIG_DIR = "/home/u/.claude-alt"\nCODEX_HOME = "/nope"\n`);
-    expect(agentFileToSpec(af, { networkRoot: null }).configDir).toBe("/home/u/.claude-alt");
+    const af = parseAgentFile(`${MIN}[env]\nCLAUDE_CONFIG_DIR = "/home/example/.claude-alt"\nCODEX_HOME = "/nope"\n`);
+    expect(agentFileToSpec(af, { networkRoot: null }).configDir).toBe("/home/example/.claude-alt");
   });
 
   // FAILS ON MAIN: codexConfigPath() took no argument and always returned ~/.codex/config.toml, so a codex
@@ -215,7 +215,7 @@ describe("a harness declares what it does NOT support", () => {
   // (The CLI refuses it outright; this pins the launch layer so the two cannot disagree.)
   it("a configDir on opencode/pi injects nothing rather than guessing a variable", () => {
     for (const h of ["opencode", "pi"] as const) {
-      const env = harnessEnv(spec({ harness: h, configDir: "/home/u/whatever" }));
+      const env = harnessEnv(spec({ harness: h, configDir: "/home/example/whatever" }));
       expect(env["CLAUDE_CONFIG_DIR"]).toBeUndefined();
       expect(env["CODEX_HOME"]).toBeUndefined();
       expect(Object.keys(env)).toEqual(["ST_AGENT"]);

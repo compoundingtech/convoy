@@ -61,8 +61,8 @@ describe("AgentSpec (ported from AgentSpecTests.swift)", () => {
   });
 
   it("session-id: <prefix>.<agentShort>; agentShort strips the harness suffix; prefix defaults to hostname", () => {
-    expect(sessionId(spec({ identity: "convoy-claude", prefix: "silber" }))).toBe("silber.convoy");
-    expect(sessionId(spec({ identity: "app-web-claude", prefix: "silber" }))).toBe("silber.app-web");
+    expect(sessionId(spec({ identity: "convoy-claude", prefix: "example-mac" }))).toBe("example-mac.convoy");
+    expect(sessionId(spec({ identity: "app-web-claude", prefix: "example-mac" }))).toBe("example-mac.app-web");
     expect(sessionId(spec({ identity: "bare", prefix: "h" }))).toBe("h.bare");
     expect(agentShort("cos-codex")).toBe("cos");
     expect(specPrefix(spec({ prefix: "custom" }))).toBe("custom");

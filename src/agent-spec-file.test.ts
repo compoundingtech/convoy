@@ -6,19 +6,19 @@ const MIN = `identity = "fabric"\nrole = "worker"\nsupervisor = "cos"\n`;
 
 describe("the spec's agent-level fields", () => {
   it("parses supervisor, prefix, bin, and env", () => {
-    const af = parseAgentFile(`${MIN}prefix = "silber"\nbin = "/opt/wrap/claude"\n[env]\nCODEX_HOME = "$HOME/.codex-fabric"\n`);
+    const af = parseAgentFile(`${MIN}prefix = "example-mac"\nbin = "/opt/wrap/claude"\n[env]\nCODEX_HOME = "$HOME/.codex-fabric"\n`);
     expect(af.supervisor).toBe("cos");
-    expect(af.prefix).toBe("silber");
+    expect(af.prefix).toBe("example-mac");
     expect(af.bin).toBe("/opt/wrap/claude");
     expect(af.env?.["CODEX_HOME"]).toBe("$HOME/.codex-fabric");
   });
 
   it("carries pty task blocks — the agent is the job, its ptys are the tasks", () => {
-    const af = parseAgentFile(`${MIN}[pty.agent]\ncommand = "exec claude"\nkeep = true\n[pty.agent.env]\nST_AGENT = "silber.fabric"\n[pty.ding]\ncommand = "st ding silber.fabric"\n`);
+    const af = parseAgentFile(`${MIN}[pty.agent]\ncommand = "exec claude"\nkeep = true\n[pty.agent.env]\nST_AGENT = "example-mac.fabric"\n[pty.ding]\ncommand = "st ding example-mac.fabric"\n`);
     expect(Object.keys(af.pty ?? {}).sort()).toEqual(["agent", "ding"]);
     expect(af.pty?.["agent"]?.command).toBe("exec claude");
     expect(af.pty?.["agent"]?.keep).toBe(true);
-    expect(af.pty?.["agent"]?.env?.["ST_AGENT"]).toBe("silber.fabric");
+    expect(af.pty?.["agent"]?.env?.["ST_AGENT"]).toBe("example-mac.fabric");
   });
 
   it("reads render.file as a list whether written once or many times", () => {
@@ -37,7 +37,7 @@ describe("the spec's agent-level fields", () => {
   });
 
   it("round-trips the new fields through the TOML writer", () => {
-    const af = parseAgentFile(`${MIN}bin = "/opt/wrap/claude"\nprefix = "silber"\n[env]\nCLAUDE_CONFIG_DIR = "$HOME/.claude-fabric"\n`);
+    const af = parseAgentFile(`${MIN}bin = "/opt/wrap/claude"\nprefix = "example-mac"\n[env]\nCLAUDE_CONFIG_DIR = "$HOME/.claude-fabric"\n`);
     const again = parseAgentFile(agentFileToToml(af));
     expect(again).toEqual(af);
   });

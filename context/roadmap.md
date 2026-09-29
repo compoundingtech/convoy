@@ -66,3 +66,22 @@ which machine issued it.
   one machine.
 - Promotion target: the supervision subsystem, or a dedicated child node for
   cross-machine convergence.
+
+## Resuming the harness conversation across respawn
+
+A respawn is a cold boot today: recovery replays the session manifest, and the
+agent rebuilds its context from its bus folder and its boot ritual. Keeping the
+harness's conversation would make a respawn a continuation instead. The shape is
+a conversation id kept in the agent's workspace: the first launch mints it and
+starts the harness with it, and every later launch resumes it.
+
+The hazard is resuming a conversation whose original process still holds it.
+That fails at once, and under a supervisor it becomes a tight respawn loop. So
+resume depends on the liveness rule in the
+[supervision spec](./03-supervision/spec.md): a session reported gone is
+respawned only when its process is gone too.
+
+- Trigger: a respawned agent re-acts on work its previous run already handled,
+  or the boot ritual's cost dominates short restarts.
+- Promotion target: restart durability in the transports subsystem spec, and
+  death and recovery in the supervision subsystem spec.

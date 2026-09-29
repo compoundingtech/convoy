@@ -19,7 +19,7 @@ export function catalogSyncName(networkDir: string): string {
 }
 
 /** The `fabric sync add` argv convoy runs to declare a network's catalog: folder = the ABSOLUTE catalog dir,
- *  the shared per-network `--name`, `--peers *` (follows peers.toml — a newly-trusted machine like hetz is
+ *  the shared per-network `--name`, `--peers *` (follows peers.toml — a newly-trusted machine like example-linux is
  *  auto-included, entry never changes), `--policy catalog`, `--include *.toml` (only agent files sync — guards
  *  against a stray non-agent file in the dir). Pure → unit-testable without running fabric. */
 export function fabricSyncAddArgv(networkDir: string): string[] {

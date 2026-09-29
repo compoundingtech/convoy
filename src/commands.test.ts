@@ -69,7 +69,7 @@ describe("retireInCatalog — `convoy remove` decommission = set retired=true (u
   it("resolves a HOST-PREFIXED bus id (`<host>.<identity>`, what `convoy ls` shows) by stripping the prefix", () => {
     const catalog = tmpCatalog();
     writeAgentFile(agentFilePath(catalog, "evals-codex"), { identity: "evals-codex", role: "worker" });
-    const r = retireInCatalog(catalog, "silber.evals-codex");
+    const r = retireInCatalog(catalog, "example-mac.evals-codex");
     expect(r?.path).toBe(agentFilePath(catalog, "evals-codex"));
     expect(readAgentFile(agentFilePath(catalog, "evals-codex")).retired).toBe(true);
   });
@@ -115,17 +115,17 @@ describe("resolveNetworkRoot (no-leak: pty scope follows the bus scope)", () => 
   // network dir, so `convoy add` wrote the catalog under `<net>/smalltalk/catalog/` (unsynced) — silently
   // never syncing/launching. The fallback now strips the trailing `smalltalk` to recover `<net>`.
   it("strips the bus-root `smalltalk` segment: ST_ROOT=<net>/smalltalk falls back to <net>, not the bus root", () => {
-    process.env["ST_ROOT"] = "/home/state/convoy/default/smalltalk";
-    expect(resolveNetworkRoot(null)).toBe("/home/state/convoy/default");
+    process.env["ST_ROOT"] = "/home/example/.local/state/convoy/default/smalltalk";
+    expect(resolveNetworkRoot(null)).toBe("/home/example/.local/state/convoy/default");
   });
 
   it("ACCEPTANCE (exact repro): with ST_ROOT=<net>/smalltalk, `convoy add`'s catalog path lands in <net>/catalog/, NOT <net>/smalltalk/catalog/", () => {
     // cmdAdd computes `agentFilePath(catalogDir(resolveNetworkRoot(--network)), identity)`; drive that exact
     // chain with the reported ambient env (no --network → null) and assert where the file would be written.
-    process.env["ST_ROOT"] = "/home/state/convoy/default/smalltalk";
+    process.env["ST_ROOT"] = "/home/example/.local/state/convoy/default/smalltalk";
     const network = resolveNetworkRoot(null);
     const path = agentFilePath(catalogDir(network), "demo");
-    expect(path).toBe("/home/state/convoy/default/catalog/demo.toml"); // the SYNCED catalog
+    expect(path).toBe("/home/example/.local/state/convoy/default/catalog/demo.toml"); // the SYNCED catalog
     expect(path).not.toContain("/smalltalk/catalog/"); // never the unsynced bus-root subtree
   });
 });
@@ -138,7 +138,7 @@ describe("networkDirOfStRoot — recover the network dir from a bus root (invers
     expect(networkDirOfStRoot("/n/default")).toBe("/n/default");
   });
   it("a network literally NAMED smalltalk still resolves: <home>/smalltalk/smalltalk → <home>/smalltalk", () => {
-    expect(networkDirOfStRoot("/home/convoy/smalltalk/smalltalk")).toBe("/home/convoy/smalltalk");
+    expect(networkDirOfStRoot("/home/example/convoy/smalltalk/smalltalk")).toBe("/home/example/convoy/smalltalk");
   });
 });
 
@@ -238,7 +238,7 @@ describe("convoy env / shell — network env exports (footgun-proof targeting)",
 
   it("hostPrefixedIdentity: a bare id gets the short-host prefix; an already-prefixed one passes through", () => {
     expect(hostPrefixedIdentity("cvw-claude")).toBe(`${shortHostname()}.cvw-claude`); // matches the bus folder
-    expect(hostPrefixedIdentity("silber.cvw-claude")).toBe("silber.cvw-claude"); // already prefixed → unchanged
+    expect(hostPrefixedIdentity("example-mac.cvw-claude")).toBe("example-mac.cvw-claude"); // already prefixed → unchanged
   });
 
   it("resolveNetworkEnv derives {networkDir, stRoot=<dir>/smalltalk, ptyRoot=<dir>/pty} from a REAL network dir", () => {
@@ -332,16 +332,16 @@ describe("convoy ls --tree — spawn-parentage forest + remote section", () => {
   const A = (identity: string, status = "available"): Agent => ({ identity, status: status as never, name: null, lastActivity: null, inbox: null });
 
   it("agentForest: nests children under their spawner; cos-tier root first; non-local → remote", () => {
-    const agents = [A("cos-claude"), A("sup-claude"), A("worker-claude"), A("app-apple-claude"), A("hetz-demo")];
+    const agents = [A("cos-claude"), A("sup-claude"), A("worker-claude"), A("app-apple-claude"), A("example-linux-demo")];
     const local = new Map<string, LocalInfo>([
       ["cos-claude", { spawner: undefined, tier: "cos" }],
       ["sup-claude", { spawner: "cos-claude", tier: undefined }],
       ["worker-claude", { spawner: "sup-claude", tier: undefined }],
       ["app-apple-claude", { spawner: undefined, tier: undefined }], // no spawner → a root (flat, pre-#48)
-      // hetz-demo has NO local session → remote
+      // example-linux-demo has NO local session → remote
     ]);
     const { roots, remote } = agentForest(agents, local);
-    expect(remote.map((a) => a.identity)).toEqual(["hetz-demo"]);
+    expect(remote.map((a) => a.identity)).toEqual(["example-linux-demo"]);
     expect(roots.map((r) => r.agent.identity)).toEqual(["cos-claude", "app-apple-claude"]); // cos-tier sorts first
     const cos = roots.find((r) => r.agent.identity === "cos-claude")!;
     expect(cos.children.map((c) => c.agent.identity)).toEqual(["sup-claude"]);
@@ -350,7 +350,7 @@ describe("convoy ls --tree — spawn-parentage forest + remote section", () => {
 
   it("agentForest: a spawner that isn't a local agent → the child is a ROOT (Phase 1 has no cross-machine parent), never dropped", () => {
     const agents = [A("wk-claude")];
-    const local = new Map<string, LocalInfo>([["wk-claude", { spawner: "hetz-sup", tier: undefined }]]);
+    const local = new Map<string, LocalInfo>([["wk-claude", { spawner: "example-linux-sup", tier: undefined }]]);
     expect(agentForest(agents, local).roots.map((r) => r.agent.identity)).toEqual(["wk-claude"]);
   });
 
@@ -381,12 +381,12 @@ describe("cross-machine liveness (item 2) — readAgentPresence + shortHost", ()
   it("readAgentPresence: status MTIME from <root>/<id>/status + host from the folder-name prefix (<host>.<identity>)", () => {
     const root = mkdtempSync(join(tmpdir(), "convoy-pres-"));
     try {
-      mkdirSync(join(root, "hetz.hetz-codex"), { recursive: true });
-      writeFileSync(join(root, "hetz.hetz-codex", "status"), "available\n");
-      const p = readAgentPresence(root, "hetz.hetz-codex");
+      mkdirSync(join(root, "example-linux.example-linux-codex"), { recursive: true });
+      writeFileSync(join(root, "example-linux.example-linux-codex", "status"), "available\n");
+      const p = readAgentPresence(root, "example-linux.example-linux-codex");
       expect(typeof p.statusMtime).toBe("number");
       expect(p.statusMtime).toBeGreaterThan(0);
-      expect(p.host).toBe("hetz"); // derived from the folder-name prefix, NOT a host file
+      expect(p.host).toBe("example-linux"); // derived from the folder-name prefix, NOT a host file
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -405,10 +405,10 @@ describe("cross-machine liveness (item 2) — readAgentPresence + shortHost", ()
   });
 
   it("shortHost: first dot-label, lowercased (for display + same-host comparison)", () => {
-    expect(shortHost("hetz.example.com")).toBe("hetz");
-    expect(shortHost("silber")).toBe("silber");
-    expect(shortHost("HETZ.local")).toBe("hetz");
-    expect(shortHost("  hetz  ")).toBe("hetz");
+    expect(shortHost("example-linux.example.com")).toBe("example-linux");
+    expect(shortHost("example-mac")).toBe("example-mac");
+    expect(shortHost("EXAMPLE-LINUX.local")).toBe("example-linux");
+    expect(shortHost("  example-linux  ")).toBe("example-linux");
   });
 });
 

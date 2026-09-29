@@ -62,12 +62,12 @@ export function specPermissionMode(_s: AgentSpec): PermissionMode {
   return "bypassPermissions";
 }
 /** Short hostname (no domain), LOWERCASED — the default session-id prefix per Nathan's naming decision.
- *  Lowercased so it matches pty's id charset + the validated live ids (`silber`, not `Silber.local`). */
+ *  Lowercased so it matches pty's id charset + the validated live ids (`example-mac`, not `Example-Mac.local`). */
 export function shortHostname(): string {
   const h = hostname();
   return (h.split(".")[0] || h).toLowerCase();
 }
-/** The session-id prefix: `--prefix` override, else the short hostname (e.g. `silber`). */
+/** The session-id prefix: `--prefix` override, else the short hostname (e.g. `example-mac`). */
 export function specPrefix(s: AgentSpec): string {
   return s.prefix ?? shortHostname();
 }
@@ -75,13 +75,13 @@ export function specPrefix(s: AgentSpec): string {
 export function agentShort(identity: string): string {
   return identity.replace(HARNESS_SUFFIX_RE, "");
 }
-/** The pinned pty session id for the claude session: `<prefix>.<agentShort>` (e.g. `silber.convoy`).
+/** The pinned pty session id for the claude session: `<prefix>.<agentShort>` (e.g. `example-mac.convoy`).
  *  The ding session appends `.ding`. Stable across respawns so ding + name refs never drift. */
 export function sessionId(s: AgentSpec): string {
   return `${specPrefix(s)}.${agentShort(s.identity)}`;
 }
 /** The bus identity (`ST_AGENT`): the short-host prefix + the FULL identity, keeping the harness suffix
- *  (e.g. `silber.convoy-claude`). Host-prefixed so each machine's agents are distinct bus folders that
+ *  (e.g. `example-mac.convoy-claude`). Host-prefixed so each machine's agents are distinct bus folders that
  *  sync as a clean cross-machine union; the host is read back from this prefix (no separate host file). */
 export function busAgentId(s: AgentSpec): string {
   return `${specPrefix(s)}.${s.identity}`;

@@ -39,7 +39,7 @@ describe("identityErrors — one grammar, owned by the bus", () => {
 describe("identity length — derived from pty's socket, not a taste bound", () => {
   it("budgets exactly what pty leaves after PTY_ROOT, the prefix, and the .ding.sock suffix", () => {
     const root = "/n/pty";
-    const prefix = "silber";
+    const prefix = "example-mac";
     const budget = identityByteBudget(root, prefix);
     // The longest path convoy can produce for this identity must fit pty's limit exactly at the boundary.
     const at = "x".repeat(budget);

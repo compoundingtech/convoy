@@ -9,7 +9,7 @@ describe("decodeSpecText — three formats, one canonical object", () => {
 identity   = "fabric-claude"
 role       = "worker"
 supervisor = "cos"
-host       = "silber"
+host       = "example-mac"
 workspace  = "/repos/fabric"
 retired    = false
 
@@ -21,23 +21,23 @@ command = "exec claude"
 tags    = { role = "agent" }
 
 [pty.agent.env]
-ST_AGENT = "silber.fabric-claude"
+ST_AGENT = "example-mac.fabric-claude"
 
 [pty.ding]
-command = "st ding silber.fabric"
+command = "st ding example-mac.fabric"
 `;
 
   const JSON_TEXT = JSON.stringify({
     identity: "fabric-claude",
     role: "worker",
     supervisor: "cos",
-    host: "silber",
+    host: "example-mac",
     workspace: "/repos/fabric",
     retired: false,
     env: { CLAUDE_CONFIG_DIR: "$HOME/.claude-fabric" },
     pty: {
-      agent: { command: "exec claude", tags: { role: "agent" }, env: { ST_AGENT: "silber.fabric-claude" } },
-      ding: { command: "st ding silber.fabric" },
+      agent: { command: "exec claude", tags: { role: "agent" }, env: { ST_AGENT: "example-mac.fabric-claude" } },
+      ding: { command: "st ding example-mac.fabric" },
     },
   });
 
@@ -45,7 +45,7 @@ command = "st ding silber.fabric"
 identity "fabric-claude"
 role "worker"
 supervisor "cos"
-host "silber"
+host "example-mac"
 workspace "/repos/fabric"
 retired #false
 
@@ -57,12 +57,12 @@ pty "agent" {
   command "exec claude"
   tags role="agent"
   env {
-    ST_AGENT "silber.fabric-claude"
+    ST_AGENT "example-mac.fabric-claude"
   }
 }
 
 pty "ding" {
-  command "st ding silber.fabric"
+  command "st ding example-mac.fabric"
 }
 `;
 
@@ -146,19 +146,19 @@ describe("the PUBLISHED spec's own examples parse", () => {
 agent "fabric-claude" {
   role       "worker"
   supervisor "cos"
-  host       "silber"
+  host       "example-mac"
   workspace  "/repos/fabric"
   transport  "ding"
   retired   #false
-  prefix    "silber.fabric"
+  prefix    "example-mac.fabric"
 
   pty "agent" {
-    id      "silber.fabric-claude"
+    id      "example-mac.fabric-claude"
     command #"exec claude --permission-mode bypassPermissions 'cold-start: run boot ritual, then stand by'"#
     cwd     "."
     tags role="agent" "st.network"="$CONVOY_NET"
     env {
-      ST_AGENT "silber.fabric-claude"
+      ST_AGENT "example-mac.fabric-claude"
       ST_ROOT  "$CONVOY_NET/smalltalk"
     }
   }

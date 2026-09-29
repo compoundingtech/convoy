@@ -181,7 +181,7 @@ export function resolveNetworkEnv(args: string[]): { networkDir: string; stRoot:
   return { networkDir, stRoot: l.stRoot, ptyRoot: l.ptyRoot };
 }
 
-/** Host-prefix a bare identity (`cvw-claude` → `silber.cvw-claude`) so a human acting-as an agent gets
+/** Host-prefix a bare identity (`cvw-claude` → `example-mac.cvw-claude`) so a human acting-as an agent gets
  *  an ST_AGENT that MATCHES the host-prefixed bus folder (`<net>/smalltalk/<host>.<id>/`). An identity
  *  that already carries a host prefix (contains a `.`) passes through unchanged. */
 export function hostPrefixedIdentity(id: string): string {
