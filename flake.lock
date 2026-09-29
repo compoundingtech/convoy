@@ -44,13 +44,13 @@
         "lastModified": 1784556029,
         "narHash": "sha256-52SqV7ANR/r+gqGNo/e2JUmQImpmCgmMUScd0KZlTW0=",
         "owner": "compoundingtech",
-        "repo": "pty",
+        "repo": "pty-original-experiment",
         "rev": "0a9be8c06bd9e3f0c1acbb34784762075ef53eb3",
         "type": "github"
       },
       "original": {
         "owner": "compoundingtech",
-        "repo": "pty",
+        "repo": "pty-original-experiment",
         "type": "github"
       }
     },
@@ -78,13 +78,13 @@
         "lastModified": 1784582866,
         "narHash": "sha256-ZJN8bZafY/ntKtvVYWxP9JQFUbeTYrhdzf3SA3hpwAs=",
         "owner": "compoundingtech",
-        "repo": "smalltalk",
+        "repo": "smalltalk-original-experiment",
         "rev": "850266f8551335771b2d922a7456e7246621c737",
         "type": "github"
       },
       "original": {
         "owner": "compoundingtech",
-        "repo": "smalltalk",
+        "repo": "smalltalk-original-experiment",
         "type": "github"
       }
     },
