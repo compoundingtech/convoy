@@ -184,7 +184,7 @@ export function provisionContext(memberDir: string, identity: string): string | 
  *  `convoy add`, from their ST_AGENT) is stamped on the HARNESS session so a crash-ding reaches this agent's
  *  ACTUAL supervisor, not the whole permanent crew (see up.ts crashDingTargets). */
 export function writePtyToml(dir: string, spec: AgentSpec, opts?: { spawner?: string | null }): void {
-  const busId = busAgentId(spec); // the host-prefixed bus identity, e.g. silber.convoy-claude
+  const busId = busAgentId(spec); // the host-prefixed bus identity, e.g. example-mac.convoy-claude
   const root = spec.networkRoot; // the network DIR; ST_ROOT is <root>/smalltalk (the bus), PTY_ROOT is <root>/pty
   // Per-network config from <net>/convoy.toml (unset fields → defaults): the ding SERVICE (node `st ding`
   // vs rust `ding`) baked into the sidecar command, and a network-wide agent ENV merged into every session
@@ -192,8 +192,8 @@ export function writePtyToml(dir: string, spec: AgentSpec, opts?: { spawner?: st
   const netCfg = root ? readNetworkConfig(root) : null;
   const dingService = netCfg?.ding;
   const networkEnv = netCfg?.env ?? {};
-  const harnessId = sessionId(spec); // e.g. silber.convoy (agentShort strips the -claude/-codex suffix)
-  const dingId = `${harnessId}.ding`; // e.g. silber.convoy.ding
+  const harnessId = sessionId(spec); // e.g. example-mac.convoy (agentShort strips the -claude/-codex suffix)
+  const dingId = `${harnessId}.ding`; // e.g. example-mac.convoy.ding
   const permanent = specPermanent(spec);
   const stTag = root ? { "st.network": root } : {};
   // Crash-ding targeting tags (read by up.ts crashDingTargets), HARNESS session only — never the ding sidecar

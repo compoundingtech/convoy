@@ -17,7 +17,7 @@ network's path, the prefix, the longest suffix convoy appends, and the
 separators.
 
 This means the bound is **contextual**. A network at `/n` genuinely affords
-longer agent names than one at `/home/user/.local/state/convoy/default`. A fixed
+longer agent names than one at `/home/example/.local/state/convoy/default`. A fixed
 constant is either wrong for short paths (needlessly restrictive) or wrong for
 long ones (accepts names that cannot bind).
 

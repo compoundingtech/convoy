@@ -44,12 +44,12 @@ describe("isValidJobId", () => {
 describe("writeCompletion / readCompletion", () => {
   it("round-trips the event and creates the jobs dir atomically", () => {
     const n = net();
-    const path = writeCompletion(n, { job: "default", status: "ok", message: "done", by: "silber.sup", ts: 123 });
+    const path = writeCompletion(n, { job: "default", status: "ok", message: "done", by: "example-mac.sup", ts: 123 });
     expect(path).toBe(completionPath(n, "default"));
     expect(existsSync(jobsDir(n))).toBe(true);
     // no leftover temp file from the atomic write
     expect(readFileSync(path, "utf8")).toMatch(/"status": "ok"/);
-    expect(readCompletion(n, "default")).toEqual({ job: "default", status: "ok", message: "done", by: "silber.sup", ts: 123 });
+    expect(readCompletion(n, "default")).toEqual({ job: "default", status: "ok", message: "done", by: "example-mac.sup", ts: 123 });
   });
 
   it("returns null when no event exists yet", () => {

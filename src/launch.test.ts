@@ -52,28 +52,28 @@ describe("native launch command builders (cold-start boot-prompt)", () => {
   });
 
   it("dingCommand: st ding <claude-session-id> --identity <bus-id>", () => {
-    expect(dingCommand("convoy-claude", "silber.convoy")).toBe("st ding silber.convoy --identity convoy-claude");
+    expect(dingCommand("convoy-claude", "example-mac.convoy")).toBe("st ding example-mac.convoy --identity convoy-claude");
   });
 
   it("dingCommand: bakes --root <net> into the command line when a network root is given (restart-proof)", () => {
-    expect(dingCommand("convoy-claude", "silber.convoy", "/Users/x/.local/state/convoy")).toBe(
-      "st ding silber.convoy --identity convoy-claude --root /Users/x/.local/state/convoy",
+    expect(dingCommand("convoy-claude", "example-mac.convoy", "/Users/example/.local/state/convoy")).toBe(
+      "st ding example-mac.convoy --identity convoy-claude --root /Users/example/.local/state/convoy",
     );
     // no root → no flag (unchanged behavior; falls back to ST_ROOT env / install default)
-    expect(dingCommand("convoy-claude", "silber.convoy", null)).toBe("st ding silber.convoy --identity convoy-claude");
+    expect(dingCommand("convoy-claude", "example-mac.convoy", null)).toBe("st ding example-mac.convoy --identity convoy-claude");
   });
 
   it("dingCommand: service='rust' swaps the binary to `ding` (identical args); 'node'/undefined → `st ding`", () => {
     // rust ding = drop-in: same positional session-id, same --identity/--root — only the prefix changes.
-    expect(dingCommand("convoy-claude", "silber.convoy", "/net/smalltalk", "rust")).toBe(
-      "ding silber.convoy --identity convoy-claude --root /net/smalltalk",
+    expect(dingCommand("convoy-claude", "example-mac.convoy", "/net/smalltalk", "rust")).toBe(
+      "ding example-mac.convoy --identity convoy-claude --root /net/smalltalk",
     );
     // node + undefined both → `st ding` (the default; every existing user is unchanged).
-    expect(dingCommand("convoy-claude", "silber.convoy", "/net/smalltalk", "node")).toBe(
-      "st ding silber.convoy --identity convoy-claude --root /net/smalltalk",
+    expect(dingCommand("convoy-claude", "example-mac.convoy", "/net/smalltalk", "node")).toBe(
+      "st ding example-mac.convoy --identity convoy-claude --root /net/smalltalk",
     );
-    expect(dingCommand("convoy-claude", "silber.convoy", "/net/smalltalk")).toBe(
-      "st ding silber.convoy --identity convoy-claude --root /net/smalltalk",
+    expect(dingCommand("convoy-claude", "example-mac.convoy", "/net/smalltalk")).toBe(
+      "st ding example-mac.convoy --identity convoy-claude --root /net/smalltalk",
     );
   });
 });
@@ -89,7 +89,7 @@ describe("writePtyToml (pinned hostname-prefixed ids, cold start)", () => {
     personaOverride: null,
     workingDir: null,
     permanentOverride: null,
-    prefix: "silber",
+    prefix: "example-mac",
     configDir: null,
     model: null,
     bin: null,
@@ -102,11 +102,11 @@ describe("writePtyToml (pinned hostname-prefixed ids, cold start)", () => {
     try {
       writePtyToml(dir, spec());
       const toml = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
-      expect(toml).toContain('id = "silber.convoy"');
-      expect(toml).toContain('id = "silber.convoy.ding"');
-      expect(toml).toContain('prefix = "silber.convoy"');
+      expect(toml).toContain('id = "example-mac.convoy"');
+      expect(toml).toContain('id = "example-mac.convoy.ding"');
+      expect(toml).toContain('prefix = "example-mac.convoy"');
       expect(toml).toContain("exec claude --permission-mode bypassPermissions");
-      expect(toml).toContain("st ding silber.convoy --identity silber.convoy-claude"); // host-prefixed bus id
+      expect(toml).toContain("st ding example-mac.convoy --identity example-mac.convoy-claude"); // host-prefixed bus id
       expect(toml).not.toContain("pty send"); // poker gone
       expect(toml).not.toContain("--resume"); // cold start
     } finally {
@@ -120,7 +120,7 @@ describe("writePtyToml (pinned hostname-prefixed ids, cold start)", () => {
       writePtyToml(dir, spec({ networkRoot: "/net/convoy" }));
       const toml = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
       // ding command carries --root (the bus root = <net>/smalltalk) so a pty-restart can't drop it
-      expect(toml).toContain("st ding silber.convoy --identity silber.convoy-claude --root /net/convoy/smalltalk");
+      expect(toml).toContain("st ding example-mac.convoy --identity example-mac.convoy-claude --root /net/convoy/smalltalk");
       // --root is a ding-only concern; the harness (claude) command must not get it
       expect(toml).not.toContain("exec claude --permission-mode bypassPermissions --root");
       // env carries ST_ROOT = the bus root (<net>/smalltalk), not the network dir
@@ -138,14 +138,14 @@ describe("writePtyToml (pinned hostname-prefixed ids, cold start)", () => {
       writeNetworkConfig(net, { name: "ournet" });
       writePtyToml(dir, spec({ networkRoot: net }));
       expect(readFileSync(join(dir, ".convoy", "pty.toml"), "utf8")).toContain(
-        `st ding silber.convoy --identity silber.convoy-claude --root ${stRootOf(net)}`,
+        `st ding example-mac.convoy --identity example-mac.convoy-claude --root ${stRootOf(net)}`,
       );
 
       // network chooses rust → the sidecar swaps to `ding` (same args), fully — no `st ding` left.
       writeNetworkConfig(net, { name: "ournet", ding: "rust" });
       writePtyToml(dir, spec({ networkRoot: net }));
       const toml = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
-      expect(toml).toContain(`ding silber.convoy --identity silber.convoy-claude --root ${stRootOf(net)}`);
+      expect(toml).toContain(`ding example-mac.convoy --identity example-mac.convoy-claude --root ${stRootOf(net)}`);
       expect(toml).not.toContain("st ding");
     } finally {
       rmSync(net, { recursive: true, force: true });
@@ -170,8 +170,8 @@ describe("writePtyToml (pinned hostname-prefixed ids, cold start)", () => {
       expect(harness["PTY_REAP_ON_EXIT"]).toBe("false");
       expect(ding["PTY_REAP_ON_EXIT"]).toBe("false");
       // the derived wiring ALWAYS wins — a network env can't repoint ST_AGENT.
-      expect(harness["ST_AGENT"]).toBe("silber.convoy-claude");
-      expect(ding["ST_AGENT"]).toBe("silber.convoy-claude");
+      expect(harness["ST_AGENT"]).toBe("example-mac.convoy-claude");
+      expect(ding["ST_AGENT"]).toBe("example-mac.convoy-claude");
       // a per-agent env key overrides the network default (harness); the ding has no per-agent env → network value.
       expect(harness["SHARED"]).toBe("agent-wins");
       expect(ding["SHARED"]).toBe("net");
@@ -209,7 +209,7 @@ describe("writePtyToml (pinned hostname-prefixed ids, cold start)", () => {
     try {
       writePtyToml(dir, spec({ role: "chief-of-staff", identity: "cos-claude" }));
       const toml = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
-      expect(toml).toContain('id = "silber.cos"');
+      expect(toml).toContain('id = "example-mac.cos"');
       expect(toml).toContain("first-run interview");
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -225,8 +225,8 @@ describe("writePtyToml (pinned hostname-prefixed ids, cold start)", () => {
       expect(toml).toContain("exec codex --dangerously-bypass-approvals-and-sandbox");
       expect(toml).not.toContain("[sessions.claude]");
       expect(toml).not.toContain("exec claude");
-      expect(toml).toContain('id = "silber.vauban"'); // agentShort strips the -codex suffix
-      expect(toml).toContain("st ding silber.vauban --identity silber.vauban-codex"); // host-prefixed bus id
+      expect(toml).toContain('id = "example-mac.vauban"'); // agentShort strips the -codex suffix
+      expect(toml).toContain("st ding example-mac.vauban --identity example-mac.vauban-codex"); // host-prefixed bus id
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -323,10 +323,10 @@ describe("discoverSmalltalkDir via ST_BIN (the off-PATH hooks discovery — Joha
 
 describe("regenerateDingRoot (heal pre-#43 pty.tomls for cold-start durability)", () => {
   // A PRE-#43 pty.toml: ding command has NO --root, root lives only in [sessions.ding.env].
-  const preToml = `prefix = "silber.evals"
+  const preToml = `prefix = "example-mac.evals"
 
 [sessions.claude]
-id = "silber.evals"
+id = "example-mac.evals"
 command = "exec claude --permission-mode bypassPermissions --resume ABC-123-RESUME"
 
 [sessions.claude.tags]
@@ -340,8 +340,8 @@ ST_ROOT = "/net/convoy"
 PTY_ROOT = "/net/convoy/pty"
 
 [sessions.ding]
-id = "silber.evals.ding"
-command = "st ding silber.evals --identity evals-claude"
+id = "example-mac.evals.ding"
+command = "st ding example-mac.evals --identity evals-claude"
 
 [sessions.ding.tags]
 role = "ding"
@@ -361,10 +361,10 @@ PTY_ROOT = "/net/convoy/pty"
       writeFileSync(join(dir, ".convoy", "pty.toml"), preToml);
       const r = regenerateDingRoot(dir);
       expect(r).not.toBeNull();
-      expect(r?.before).toBe("st ding silber.evals --identity evals-claude");
-      expect(r?.after).toBe("st ding silber.evals --identity evals-claude --root /net/convoy");
+      expect(r?.before).toBe("st ding example-mac.evals --identity evals-claude");
+      expect(r?.after).toBe("st ding example-mac.evals --identity evals-claude --root /net/convoy");
       const out = readFileSync(join(dir, ".convoy", "pty.toml"), "utf8");
-      expect(out).toContain('command = "st ding silber.evals --identity evals-claude --root /net/convoy"');
+      expect(out).toContain('command = "st ding example-mac.evals --identity evals-claude --root /net/convoy"');
       // harness block untouched — --resume + boot prompt survive byte-for-byte
       expect(out).toContain('command = "exec claude --permission-mode bypassPermissions --resume ABC-123-RESUME"');
     } finally {
@@ -628,15 +628,15 @@ describe("convoy add clean-worktree — pty.toml + settings + context, EVERY aut
 
       // DECLARATIVE flow: `convoy up` (the host) does the launch, so ST_AGENT is the HOST — the declared
       // supervisor must WIN, else a worker's crash never pages its actual parent (the regression).
-      process.env["ST_AGENT"] = "hetz.convoy-up-host";
-      writeAgentFiles(repo, { ...spec(repo, persona, netRoot), supervisor: "silber.cd-sup" });
+      process.env["ST_AGENT"] = "example-linux.convoy-up-host";
+      writeAgentFiles(repo, { ...spec(repo, persona, netRoot), supervisor: "example-mac.cd-sup" });
       const toml = readFileSync(join(repo, ".convoy", "pty.toml"), "utf8");
-      expect(toml).toContain('"convoy.spawner" = "silber.cd-sup"'); // the declared parent, NOT the host
+      expect(toml).toContain('"convoy.spawner" = "example-mac.cd-sup"'); // the declared parent, NOT the host
       expect(toml).not.toContain("convoy-up-host");
 
       // IMPERATIVE `convoy run` (no declared supervisor) → falls back to the launching ST_AGENT (the runner).
       writeAgentFiles(repo, { ...spec(repo, persona, netRoot), supervisor: null });
-      expect(readFileSync(join(repo, ".convoy", "pty.toml"), "utf8")).toContain('"convoy.spawner" = "hetz.convoy-up-host"');
+      expect(readFileSync(join(repo, ".convoy", "pty.toml"), "utf8")).toContain('"convoy.spawner" = "example-linux.convoy-up-host"');
     } finally {
       if (savedSt === undefined) delete process.env["SMALLTALK_DIR"];
       else process.env["SMALLTALK_DIR"] = savedSt;

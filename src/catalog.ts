@@ -5,7 +5,7 @@
 // keeps whatever turns out to be an agent spec. Two consequences are the point:
 //
 //   - IDENTITY COMES FROM CONTENT. The filename is not the identity. A flat `catalog/fabric.toml`, a
-//     spec'd `catalog/silber/fabric/agent.kdl`, and a `catalog/anything.json` that happens to declare
+//     spec'd `catalog/example-mac/fabric/agent.kdl`, and a `catalog/anything.json` that happens to declare
 //     `identity = "fabric"` are the same agent. Renaming a file does not rename an agent.
 //   - PATH SEGMENTS ONLY SUPPLY DEFAULTS. A directory named for a host fills in `host` when the file
 //     omits it. When both are present and DISAGREE, the content wins and discovery warns — because the

@@ -5,10 +5,10 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
 
-    pty.url = "github:compoundingtech/pty";
+    pty.url = "github:compoundingtech/pty-original-experiment";
     pty.inputs.nixpkgs.follows = "nixpkgs";
 
-    smalltalk.url = "github:compoundingtech/smalltalk";
+    smalltalk.url = "github:compoundingtech/smalltalk-original-experiment";
     smalltalk.inputs.nixpkgs.follows = "nixpkgs";
     smalltalk.inputs.flake-utils.follows = "flake-utils";
     # One pty in the closure: convoy links the same build smalltalk was built against.

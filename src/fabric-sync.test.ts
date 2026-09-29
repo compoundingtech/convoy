@@ -8,9 +8,9 @@ const throwingExec: any = async () => { throw new Error("ENOENT: fabric not foun
 
 describe("fabric-sync — convoy DECLARES its catalog to `fabric sync` (does not sync itself)", () => {
   it("catalogSyncName: convoy-catalog-<network-name>, distinct per network, same across machines", () => {
-    expect(catalogSyncName("/home/x/.local/state/convoy/default")).toBe("convoy-catalog-default");
-    expect(catalogSyncName("/home/x/.local/state/convoy/staging")).toBe("convoy-catalog-staging"); // distinct per network → no collision on one box
-    expect(catalogSyncName("/anywhere/default")).toBe("convoy-catalog-default"); // path differs Mac vs hetz; NAME is the shared key
+    expect(catalogSyncName("/home/example/.local/state/convoy/default")).toBe("convoy-catalog-default");
+    expect(catalogSyncName("/home/example/.local/state/convoy/staging")).toBe("convoy-catalog-staging"); // distinct per network → no collision on one box
+    expect(catalogSyncName("/anywhere/default")).toBe("convoy-catalog-default"); // path differs Mac vs Linux; NAME is the shared key
   });
 
   it("fabricSyncAddArgv: the exact `fabric sync add` declaration — folder=abs catalog, shared name, peers=*, policy=catalog, include=*.toml", () => {

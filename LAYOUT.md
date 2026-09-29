@@ -13,7 +13,7 @@ A convoy **network** is a named home for one crew. Networks live under `$XDG_STA
 ```
 $XDG_STATE_HOME/convoy/<network>/
   smalltalk/                       # the bus — SYNCED across machines (st sync over fabric)
-    <host>.<identity>/             # one folder per agent, hostname-prefixed (e.g. silber.cos-claude)
+    <host>.<identity>/             # one folder per agent, hostname-prefixed (e.g. example-mac.cos-claude)
       inbox/  archive/  status     # messages + the liveness heartbeat (the status file's mtime)
       context/                     # the agent's working memory (cold-boot state)
         now.md  decisions/

@@ -1,7 +1,7 @@
 // THE DECISIVE TEST (Nathan mandate, convoy incident 2026-07-22) — the permanent regression guard for
 // the Nomad decoupling invariant: STOPPING OR CRASHING `convoy up` MUST NOT KILL ITS AGENTS.
 //
-// The incident: a `convoy up` restart mid-cutover self-severed and took the whole hetz fleet down (exit
+// The incident: a `convoy up` restart mid-cutover self-severed and took a whole host's agents down (exit
 // 143 across 11). The forensic question was a-vs-b: (a) a teardown MISUSE (someone ran `convoy down` /
 // a session kill), or (b) a real bug where the decoupling does not hold in practice. This test settles
 // it AND locks the answer in: it stands up real, detached agent daemons (via convoy's OWN production

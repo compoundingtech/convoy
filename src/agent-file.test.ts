@@ -6,7 +6,7 @@ describe("parseAgentFile — schema + validation", () => {
     const af = parseAgentFile(`
 identity  = "convoy-claude"
 role      = "worker"
-host      = "silber"
+host      = "example-mac"
 workspace = "/repos/convoy"
 harness   = "codex"
 transport = "mcp"
@@ -16,7 +16,7 @@ strategy  = "permanent"
     expect(af).toEqual({
       identity: "convoy-claude",
       role: "worker",
-      host: "silber",
+      host: "example-mac",
       workspace: "/repos/convoy",
       harness: "codex",
       transport: "mcp",
@@ -30,7 +30,7 @@ strategy  = "permanent"
   });
 
   it("LOWERCASES a hand-authored capitalized host (else it silently never matches the host-filter)", () => {
-    expect(parseAgentFile(`identity="wk"\nrole="worker"\nhost="Silber"\n`).host).toBe("silber");
+    expect(parseAgentFile(`identity="wk"\nrole="worker"\nhost="Example-Mac"\n`).host).toBe("example-mac");
   });
 
   it("throws on a missing required field", () => {
@@ -117,7 +117,7 @@ describe("agentFileToSpec — compile intent → AgentSpec", () => {
   it("threads supervisor → spec.supervisor so a crash-ding reaches the parent (dropping it was the regression)", () => {
     // The declarative flow (convoy up launches from the catalog) must carry the declared supervisor through
     // to the spec — it becomes the session's convoy.spawner tag, which crashDingTargets pages on a crash.
-    expect(agentFileToSpec({ ...base, supervisor: "silber.cd-sup" }, { networkRoot: "/net" }).supervisor).toBe("silber.cd-sup");
+    expect(agentFileToSpec({ ...base, supervisor: "example-mac.cd-sup" }, { networkRoot: "/net" }).supervisor).toBe("example-mac.cd-sup");
     // no supervisor declared → null (launch then falls back to the launching ST_AGENT).
     expect(agentFileToSpec(base, { networkRoot: "/net" }).supervisor).toBeNull();
   });
@@ -125,7 +125,7 @@ describe("agentFileToSpec — compile intent → AgentSpec", () => {
 
 describe("agentFileToToml — serialize (what convoy add authors)", () => {
   it("round-trips through parse: write then read yields the same AgentFile", () => {
-    const af: AgentFile = { identity: "cos-claude", role: "chief-of-staff", host: "silber", workspace: "/repos/cos", harness: "codex", transport: "mcp", persona: "/p.md", strategy: "permanent" };
+    const af: AgentFile = { identity: "cos-claude", role: "chief-of-staff", host: "example-mac", workspace: "/repos/cos", harness: "codex", transport: "mcp", persona: "/p.md", strategy: "permanent" };
     expect(parseAgentFile(agentFileToToml(af))).toEqual(af);
   });
 

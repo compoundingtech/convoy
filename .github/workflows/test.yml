@@ -27,11 +27,11 @@ jobs:
           path: convoy
       - uses: actions/checkout@v4
         with:
-          repository: compoundingtech/pty
+          repository: compoundingtech/pty-original-experiment
           path: pty
       - uses: actions/checkout@v4
         with:
-          repository: compoundingtech/smalltalk
+          repository: compoundingtech/smalltalk-original-experiment
           path: smalltalk
 
       - uses: actions/setup-node@v4

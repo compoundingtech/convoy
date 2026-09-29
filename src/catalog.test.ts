@@ -26,7 +26,7 @@ describe("readCatalog — discovery slurps the tree", () => {
   it("finds specs at any depth, in every format, and reads identity from CONTENT not the filename", () => {
     const d = net({
       "flat.toml": `identity = "alpha"\nrole = "worker"\nsupervisor = "cos"\n`,
-      "silber/beta/agent.kdl": `identity "beta"\nrole "worker"\nsupervisor "cos"\n`,
+      "example-mac/beta/agent.kdl": `identity "beta"\nrole "worker"\nsupervisor "cos"\n`,
       "a/b/c/anything.json": JSON.stringify({ identity: "gamma", role: "worker", supervisor: "cos" }),
     });
     const { entries, errors } = readCatalog(d);
@@ -84,19 +84,19 @@ describe("readCatalog — discovery slurps the tree", () => {
 
 describe("path segments supply DEFAULTS; content wins", () => {
   it("fills host from the path when the file is silent", () => {
-    const d = net({ "silber/alpha/agent.toml": `identity = "alpha"\nrole = "worker"\nsupervisor = "cos"\n` });
+    const d = net({ "example-mac/alpha/agent.toml": `identity = "alpha"\nrole = "worker"\nsupervisor = "cos"\n` });
     const { entries, warnings } = readCatalog(d);
-    expect(entries[0]?.af.host).toBe("silber");
+    expect(entries[0]?.af.host).toBe("example-mac");
     expect(warnings.filter((w) => w.warning.includes("host"))).toEqual([]);
   });
 
   it("prefers the file over the path and WARNS on a mismatch, rather than erroring or silently obeying the path", () => {
-    const d = net({ "silber/alpha/agent.toml": `identity = "beta"\nrole = "worker"\nsupervisor = "cos"\nhost = "other"\n` });
+    const d = net({ "example-mac/alpha/agent.toml": `identity = "beta"\nrole = "worker"\nsupervisor = "cos"\nhost = "other"\n` });
     const { entries, warnings } = readCatalog(d);
     expect(entries[0]?.af.identity).toBe("beta");
     expect(entries[0]?.af.host).toBe("other");
     expect(warnings.map((w) => w.warning).join("\n")).toMatch(/path says identity "alpha".*declares "beta"/s);
-    expect(warnings.map((w) => w.warning).join("\n")).toMatch(/path says host "silber".*declares "other"/s);
+    expect(warnings.map((w) => w.warning).join("\n")).toMatch(/path says host "example-mac".*declares "other"/s);
   });
 
   it("treats a role-named directory as grouping, not an identity claim", () => {
@@ -114,7 +114,7 @@ describe("path segments supply DEFAULTS; content wins", () => {
 
 describe("pathDefaults", () => {
   it("reads the two segments nearest the file, and nothing from a flat layout", () => {
-    expect(pathDefaults("/c", "/c/silber/fabric/agent.toml")).toEqual({ host: "silber", identity: "fabric" });
+    expect(pathDefaults("/c", "/c/example-mac/fabric/agent.toml")).toEqual({ host: "example-mac", identity: "fabric" });
     expect(pathDefaults("/c", "/c/fabric.toml")).toEqual({});
     expect(pathDefaults("/c", "/c/fabric/agent.toml")).toEqual({ identity: "fabric" });
   });
@@ -122,6 +122,6 @@ describe("pathDefaults", () => {
 
 describe("newAgentSpecPath — convoy authors the spec's recommended layout", () => {
   it("writes catalog/<host>/<identity>/agent.toml", () => {
-    expect(newAgentSpecPath("/n", "silber", "fabric")).toBe(join("/n", "catalog", "silber", "fabric", "agent.toml"));
+    expect(newAgentSpecPath("/n", "example-mac", "fabric")).toBe(join("/n", "catalog", "example-mac", "fabric", "agent.toml"));
   });
 });

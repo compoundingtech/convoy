@@ -16,12 +16,12 @@ describe("toolSources", () => {
 describe("defaultBinDir / dirOnPath / pathHint (portable, env-driven)", () => {
   it("defaultBinDir honors CONVOY_BIN_DIR, else ~/.local/bin", () => {
     expect(defaultBinDir({ CONVOY_BIN_DIR: "/opt/bin" })).toBe("/opt/bin");
-    expect(defaultBinDir({ HOME: "/home/x" })).toBe("/home/x/.local/bin");
+    expect(defaultBinDir({ HOME: "/home/example" })).toBe("/home/example/.local/bin");
   });
   it("dirOnPath matches an exact PATH segment", () => {
-    expect(dirOnPath("/home/x/.local/bin", { PATH: "/usr/bin:/home/x/.local/bin:/bin" })).toBe(true);
-    expect(dirOnPath("/home/x/.local/bin", { PATH: "/usr/bin:/bin" })).toBe(false);
-    expect(dirOnPath("/home/x/.local", { PATH: "/home/x/.local/bin" })).toBe(false); // not a prefix match
+    expect(dirOnPath("/home/example/.local/bin", { PATH: "/usr/bin:/home/example/.local/bin:/bin" })).toBe(true);
+    expect(dirOnPath("/home/example/.local/bin", { PATH: "/usr/bin:/bin" })).toBe(false);
+    expect(dirOnPath("/home/example/.local", { PATH: "/home/example/.local/bin" })).toBe(false); // not a prefix match
   });
   it("pathHint is shell-specific (never assumes zsh)", () => {
     expect(pathHint("/b", { SHELL: "/usr/bin/fish" })).toMatch(/fish_add_path/);
