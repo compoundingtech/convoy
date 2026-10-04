@@ -84,7 +84,16 @@ export function discoverSmalltalkDir(): string | null {
     if (fromPath) candidates.push(fromPath);
   }
   candidates.push(join(dirname(dirname(fileURLToPath(import.meta.url))), "..", "smalltalk"));
-  for (const c of candidates) if (hasHooks(c)) return c;
+  // Each candidate is tried BOTH as the repo root and as `<candidate>/lib/smalltalk`. A packaged install
+  // (Nix, and any packager that installs the repo under `lib/`) puts `st` at `<pkg>/bin/st` while the repo
+  // itself lives at `<pkg>/lib/smalltalk` — so the `<smalltalk>/bin/st` → grandparent assumption lands on
+  // `<pkg>`, one level ABOVE the hooks. Without this the hooks ship in the package but are undiscoverable,
+  // and `doctor` reports a blocking "smalltalk hooks NOT found" on a correct install.
+  for (const c of candidates) {
+    if (hasHooks(c)) return c;
+    const packaged = join(c, "lib", "smalltalk");
+    if (hasHooks(packaged)) return packaged;
+  }
   return null;
 }
 

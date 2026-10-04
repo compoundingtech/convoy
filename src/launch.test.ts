@@ -293,6 +293,43 @@ describe("discoverSmalltalkDir (fresh-install hook discovery, no SMALLTALK_DIR n
   });
 });
 
+describe("discoverSmalltalkDir on a PACKAGED layout (repo under <pkg>/lib/smalltalk)", () => {
+  const saved = process.env["SMALLTALK_DIR"];
+  afterEach(() => {
+    if (saved === undefined) delete process.env["SMALLTALK_DIR"];
+    else process.env["SMALLTALK_DIR"] = saved;
+  });
+
+  // Nix (and any packager that installs the repo under lib/) puts `st` at <pkg>/bin/st while the repo lives
+  // at <pkg>/lib/smalltalk — so the bin/st -> grandparent assumption lands one level ABOVE the hooks.
+  it("finds the hooks under <candidate>/lib/smalltalk, not just at the candidate root", () => {
+    const pkg = mkdtempSync(join(tmpdir(), "convoy-sm-pkg-"));
+    try {
+      const repo = join(pkg, "lib", "smalltalk");
+      mkdirSync(join(repo, "examples", "claude-code", "hooks"), { recursive: true });
+      writeFileSync(join(repo, "examples", "claude-code", "hooks", "session-start.sh"), "#!/bin/sh\n");
+      process.env["SMALLTALK_DIR"] = pkg; // the package root — hooks are one level down
+      expect(discoverSmalltalkDir()).toBe(repo);
+    } finally {
+      rmSync(pkg, { recursive: true, force: true });
+    }
+  });
+
+  it("still prefers the candidate root when the hooks are there (checkout layout wins)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "convoy-sm-both-"));
+    try {
+      for (const base of [dir, join(dir, "lib", "smalltalk")]) {
+        mkdirSync(join(base, "examples", "claude-code", "hooks"), { recursive: true });
+        writeFileSync(join(base, "examples", "claude-code", "hooks", "session-start.sh"), "#!/bin/sh\n");
+      }
+      process.env["SMALLTALK_DIR"] = dir;
+      expect(discoverSmalltalkDir()).toBe(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("discoverSmalltalkDir via ST_BIN (the off-PATH hooks discovery — Johannes false-negative)", () => {
   const savedSt = process.env["SMALLTALK_DIR"];
   const savedBin = process.env["ST_BIN"];
